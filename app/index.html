@@ -1,0 +1,2404 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>PRINCESS HELENA</title>
+<style>
+  /* ======================================================================
+     ESTILOS — todo inline, cero assets externos, cero fuentes de internet.
+     ====================================================================== */
+  :root {
+    --neon-rosa: #ff4fa3;
+    --neon-cyan: #56e8ff;
+    --fondo:     #0b0716;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: var(--fondo);
+    color: #fff;
+    font-family: "Trebuchet MS", "Segoe UI", system-ui, sans-serif;
+    overflow: hidden;
+    /* Evita el zoom por doble tap y el scroll con el dedo en móvil */
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  /* Contenedor centrado que mantiene el juego a la vista */
+  #contenedor {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 8px;
+  }
+
+  /* El canvas tiene resolución interna fija (960x540) y se escala por CSS.
+     Así el juego se ve igual en cualquier pantalla. */
+  canvas {
+    display: block;
+    width: 100%;
+    max-width: 960px;
+    aspect-ratio: 16 / 9;
+    background: #0b0716;
+    border: 2px solid rgba(255, 79, 163, .55);
+    border-radius: 8px;
+    box-shadow: 0 0 24px rgba(255, 79, 163, .35), 0 0 60px rgba(86, 232, 255, .18);
+    image-rendering: pixelated; /* estética pixel art al escalar */
+  }
+
+  /* ---------- Botones táctiles (móvil) ---------- */
+  #tactil {
+    display: none;
+    width: 100%;
+    max-width: 960px;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  #tactil .grupo { display: flex; gap: 12px; }
+  .btn {
+    width: 84px;
+    height: 68px;
+    border-radius: 14px;
+    border: 2px solid rgba(86, 232, 255, .5);
+    background: rgba(255, 255, 255, .07);
+    color: #eaf6ff;
+    font-size: 26px;
+    font-weight: bold;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    touch-action: none;
+  }
+  .btn:active, .btn.activo {
+    background: rgba(255, 79, 163, .35);
+    border-color: var(--neon-rosa);
+  }
+  #btnSaltar { width: 120px; }
+
+  /* Se muestran en dispositivos táctiles o pantallas chicas */
+  @media (pointer: coarse), (max-width: 720px) {
+    #tactil { display: flex; }
+  }
+
+  /* Barra inferior: ayuda de controles + botón de silencio */
+  #barra {
+    width: 100%;
+    max-width: 960px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+  }
+  #ayuda {
+    font-size: 12px;
+    letter-spacing: 1px;
+    color: rgba(234, 246, 255, .55);
+    text-align: center;
+  }
+  #btnMute {
+    font-family: inherit;
+    font-size: 15px;
+    line-height: 1;
+    padding: 6px 10px;
+    border-radius: 10px;
+    border: 2px solid rgba(86, 232, 255, .5);
+    background: rgba(255, 255, 255, .07);
+    color: #eaf6ff;
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+  #btnMute.silenciado {
+    border-color: rgba(255, 79, 163, .6);
+    color: rgba(234, 246, 255, .45);
+  }
+</style>
+</head>
+<body>
+  <div id="contenedor">
+    <canvas id="juego" width="960" height="540"></canvas>
+
+    <!-- Controles táctiles simples: se mapean a las mismas teclas del teclado -->
+    <div id="tactil">
+      <div class="grupo">
+        <div class="btn" id="btnIzq" aria-label="Izquierda">&#9664;</div>
+        <div class="btn" id="btnDer" aria-label="Derecha">&#9654;</div>
+      </div>
+      <div class="grupo">
+        <div class="btn" id="btnSaltar" aria-label="Saltar">SALTO</div>
+      </div>
+    </div>
+
+    <div id="barra">
+      <div id="ayuda">&#8592; &#8594; MOVER &nbsp;&middot;&nbsp; ESPACIO / &#8593; SALTAR &nbsp;&middot;&nbsp; M SILENCIO</div>
+      <button id="btnMute" type="button" aria-label="Silenciar">&#128266;</button>
+    </div>
+  </div>
+
+<script>
+"use strict";
+/* ==========================================================================
+   PRINCESS HELENA — plataformas 2D en Canvas (JS vanilla, un solo archivo)
+   --------------------------------------------------------------------------
+   Orden del archivo:
+     1) CONSTANTES DE CONFIGURACIÓN   ← tuning: colores, física, game feel, audio
+     2) DATOS DEL NIVEL               ← plataformas, coleccionables, enemigos
+     3) ESTADO Y ENTIDADES            ← incluye los pools de partículas y textos
+     4) INPUT (teclado + táctil)
+     4b) AUDIO (WebAudio generado por código)
+     5) UPDATE (lógica, dt en segundos)
+     6) DRAW (dibujo puro, sin lógica)
+     7) LOOP + ARRANQUE
+   ========================================================================== */
+
+
+/* ==========================================================================
+   1) CONSTANTES DE CONFIGURACIÓN
+   Cambiar el color de la trenza = UNA línea (COLOR.trenza).
+   ========================================================================== */
+
+// --- Lienzo y mundo ---
+const ANCHO_VISTA = 960;   // resolución interna horizontal del canvas
+const ALTO_VISTA  = 540;   // resolución interna vertical
+const ANCHO_NIVEL = 2400;  // el nivel es más ancho que la pantalla: hay scroll
+const ALTO_NIVEL  = 540;   // por ahora la cámara sólo se mueve en X
+
+// --- Paleta (diseño 100% original: noche + neón K-pop) ---
+const COLOR = {
+  // Fondo
+  cieloArriba : "#140a2b",
+  cieloAbajo  : "#2a1046",
+  // Parallax capa 1 (lenta): cielo nocturno
+  estrellaCielo: "#e6f0ff",
+  luna         : "#ffe9f7",
+  lunaHalo     : "rgba(255, 143, 205, .12)",
+  // Parallax capa 2 (media): siluetas de ciudad/escenario
+  ciudad       : "#1b1038",
+  ciudadBorde  : "#3a2168",
+  ventanaRosa  : "#ff7ac0",
+  ventanaCyan  : "#7be3ff",
+  antena       : "#ff4f6d",
+  // Parallax capa 3 (rápida): luces y reflectores de escenario
+  bombilla     : "#ffe9a8",
+  // Plataformas
+  suelo       : "#2b1b4d",
+  sueloBorde  : "#56e8ff",
+  plataforma  : "#3a2168",
+  platBorde   : "#ff4fa3",
+  // Helena (outfit de escenario) — diseño propio
+  trenza      : "#A67B5B",   // castaño claro — el color estrella del proyecto
+  piel        : "#f7d7bd",
+  top         : "#ff4fa3",   // rosa neón
+  falda       : "#7b5cff",   // violeta
+  botas       : "#56e8ff",   // cyan
+  micro       : "#e9e9f5",   // cabeza del micrófono
+  polvo       : "#cbb8ec",   // polvillo al aterrizar
+  microMango  : "#2e2740",   // mango del micrófono-espada
+  lazo        : "#ffd85e",   // lazo de la trenza y guarda del micrófono
+  ojo         : "#2b1b3d",
+  labios      : "#ff5c8a",
+  rubor       : "#ff9ab5",
+  // Coleccionables
+  estrella    : "#ffd85e",
+  nota        : "#7bffcf",
+  // Enemigos
+  bug         : "#8dff6b",
+  bugOscuro   : "#3f8a2c",
+  llama       : "#ff7a2f",
+  llamaInt    : "#ffd85e",
+  // HUD
+  hudTexto    : "#eaf6ff",
+  corazon     : "#ff4f6d",
+  corazonVacio: "#4a3a5c",
+  neonRosa    : "#ff4fa3",
+  neonCyan    : "#56e8ff"
+};
+
+/**
+ * Devuelve una versión más oscura de un color #rrggbb (factor 0..1).
+ * Se usa UNA sola vez al arrancar para derivar las sombras del sprite:
+ * así, cambiar COLOR.trenza en UNA línea también actualiza su sombra.
+ */
+function oscurecer(hex, factor) {
+  const n = parseInt(hex.slice(1), 16);
+  const r = Math.round(((n >> 16) & 255) * factor);
+  const g = Math.round(((n >>  8) & 255) * factor);
+  const b = Math.round(( n        & 255) * factor);
+  return "rgb(" + r + "," + g + "," + b + ")";
+}
+
+// Sombras del sprite, derivadas automáticamente de la paleta de arriba.
+const SOMBRA = {
+  trenza: oscurecer(COLOR.trenza, 0.70),
+  piel  : oscurecer(COLOR.piel,   0.86),
+  top   : oscurecer(COLOR.top,    0.72),
+  falda : oscurecer(COLOR.falda,  0.70),
+  botas : oscurecer(COLOR.botas,  0.66)
+};
+
+// --- Parallax: cuánto se desplaza cada capa respecto de la cámara ---
+// 0 = fija al fondo, 1 = se mueve igual que el mundo. Cuanto más chico, más lejos.
+const PARALLAX = {
+  cielo  : 0.12,   // capa lenta: estrellas y luna
+  ciudad : 0.42,   // capa media: siluetas de ciudad/escenario
+  luces  : 0.72,   // capa rápida: reflectores y guirnalda de luces
+  patron : ANCHO_VISTA  // cada capa se repite cada 960px (sin huecos)
+};
+
+// --- Física ---
+const FIS = {
+  gravedad      : 2200,  // px/s²  (cuanto más alto, más "pesada" se siente)
+  velMax        : 260,   // px/s   velocidad horizontal tope
+  acelSuelo     : 2200,  // px/s²  qué tan rápido alcanza velMax en el piso
+  acelAire      : 1400,  // px/s²  control en el aire (menor = más inercia)
+  frenoSuelo    : 2600,  // px/s²  desaceleración al soltar la tecla en el piso
+  frenoAire     : 700,   // px/s²  desaceleración al soltar la tecla en el aire
+  velSalto      : 760,   // px/s   impulso inicial del salto (~131px de altura)
+  velCaidaMax   : 900,   // px/s   tope de caída (evita velocidades absurdas)
+  pasoMaxColision: 8     // px     sub-paso de colisión: nunca atraviesa nada
+};
+
+// --- Game feel (paso 2 del plan) ---
+const FEEL = {
+  coyote       : 0.10,  // s — puede saltar hasta 100ms después de dejar el piso
+  buffer       : 0.10,  // s — si aprieta salto 100ms antes de aterrizar, salta
+  corteSalto   : 0.62   // al soltar la tecla, la subida se limita a este % (salto corto)
+};
+
+// --- Reglas de juego ---
+const JUEGO = {
+  vidasIniciales : 3,
+  puntosEstrella : 10,
+  puntosNota     : 25,
+  comboVentana   : 2.0,  // s  entre recogidas para encadenar combo
+  comboMinimo    : 3,    // 3 seguidas => multiplicador
+  comboMultip    : 2,    // x2 puntos
+  invulnerable   : 1.5,  // s de invulnerabilidad tras recibir daño
+  parpadeo       : 0.10, // s de cada ciclo de parpadeo mientras es invulnerable
+  knockbackX     : 220,  // px/s de empuje horizontal al recibir daño
+  knockbackY     : 330,  // px/s de empuje hacia arriba al recibir daño
+  dtMax          : 1 / 30 // clamp de deltaTime (si la pestaña se congela, no explota)
+};
+
+// --- Juice visual: partículas, screen shake y textos flotantes (paso 5) ---
+const JUICE = {
+  // Pools de tamaño FIJO: se reservan al arrancar y nunca crecen
+  maxParticulas : 200,
+  maxTextos     : 16,
+  // Cantidad de partículas por efecto
+  partRecoger   : 10,    // estrellitas al agarrar un coleccionable
+  partDanio     : 14,    // chispas al recibir un golpe
+  partPolvo     : 8,     // polvillo al aterrizar
+  // Un pasito no levanta polvo: hace falta caer con al menos esta velocidad
+  velCaidaPolvo : 380,   // px/s
+  // Screen shake (la spec pide algo sutil: 3-4px, ~150ms)
+  shakeAmplitud : 4,     // px
+  shakeDuracion : 0.15,  // s
+  // Textos flotantes
+  textoVel      : 44,    // px/s que sube el texto
+  textoVida     : 0.85   // s que tarda en desvanecerse
+};
+
+// Fuentes de los textos flotantes, precalculadas como constantes: asignarlas a
+// ctx.font no crea strings nuevos en cada frame.
+const FUENTE_PUNTOS = "bold 18px 'Trebuchet MS', system-ui, sans-serif";
+const FUENTE_COMBO  = "bold 22px 'Trebuchet MS', system-ui, sans-serif";
+
+/* --- Audio (paso 6): todo generado con osciladores, cero archivos ---
+   Los "barridos" son listas de frecuencias en Hz: el tono arranca en la
+   primera y se desliza por las siguientes a lo largo de su duración.
+   Las duraciones están en segundos. */
+const AUDIO = {
+  volumenMaestro  : 0.22,   // volumen general (0..1). Suave a propósito.
+
+  // ⭐ estrella: tono corto ascendente
+  estrellaBarrido : [660, 1320],
+  estrellaDur     : 0.16,
+
+  // 🎵 nota musical: acorde brillante (Do–Mi–Sol–Do)
+  notaAcorde      : [523.25, 659.25, 783.99, 1046.50],
+  notaDur         : 0.42,
+
+  // Combo x2: arpegio agudo y rápido
+  comboArpegio    : [880.00, 1108.73, 1318.51, 1760.00],
+  comboPaso       : 0.055,  // s entre nota y nota
+  comboDur        : 0.13,
+
+  // Salto: "boing" grave (sube un toque y cae)
+  saltoBarrido    : [230, 430, 150],
+  saltoDur        : 0.17,
+
+  // Daño: buzz grave y áspero (dos capas)
+  danioBarrido    : [190, 55],
+  danioBarrido2   : [95, 40],
+  danioDur        : 0.30,
+
+  // Game over: cuatro notas que bajan
+  gameOverNotas   : [440.00, 349.23, 293.66, 220.00],
+  gameOverPaso    : 0.17,
+  gameOverDur     : 0.32,
+  gameOverRetardo : 0.12,   // espera a que termine el buzz del golpe final
+
+  // Envolvente común: evita los clicks de cortar la onda de golpe
+  ataque          : 0.008,  // s de subida
+  release         : 0.04    // s extra antes de apagar el oscilador
+};
+
+/* --- Leaderboard global (mejora progresiva: el juego NUNCA depende de esto) ---
+   Si la API no está, falla o tarda más de API_TIMEOUT, el juego se comporta
+   exactamente igual que sin red: high score en memoria y sin UI de ranking. */
+const API_BASE      = "/api";  // mismo origen que el juego (lo sirve nginx)
+const API_TIMEOUT   = 2000;    // ms: pasado esto abortamos y seguimos sin leaderboard
+const API_TOP_LIMIT = 5;       // cuántos puestos pedimos y mostramos
+const INICIALES_LARGO = 3;     // casillas de la entrada estilo arcade
+// Alfabeto de las iniciales: tiene que coincidir con lo que valida el servidor
+const ALFABETO = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+
+// --- Sprite de Helena y tablas de animación por frames ---
+// El sprite se dibuja sobre una grilla de 16x22 "píxeles de arte" escalada x2
+// (32x44 px en pantalla). La caja de colisión (26x40) va centrada abajo.
+const SPRITE = { ancho: 16, alto: 22, escala: 2 };
+
+// Cada estado define cuántos frames tiene y cuánto dura cada frame (segundos).
+// Son frames DISCRETOS con su timer: nada de interpolación continua.
+const ANIM = {
+  idle  : { frames: 3, dur: 0.30 },  // respiración
+  correr: { frames: 4, dur: 0.09 },  // ciclo de carrera
+  salto : { frames: 1, dur: 1.00 },  // un frame de subida
+  caida : { frames: 1, dur: 1.00 }   // un frame de caída
+};
+
+// Desplazamientos por frame, en píxeles de arte (no de pantalla).
+const IDLE_BOB     = [0, 1, 0];        // el torso baja 1px al "exhalar"
+const CORRER_BOB   = [0, -1, 0, -1];   // rebote del cuerpo al correr
+const CORRER_PIE_A = [ 2, 0, -2, 0];   // pierna A: adelante / junta / atrás
+const CORRER_PIE_B = [-2, 0,  2, 0];   // pierna B: en contrafase
+const CORRER_ALTO_A= [ 0, -1, 0,  0];  // levanta un poco el pie que va al aire
+const CORRER_ALTO_B= [ 0,  0, 0, -1];
+
+// --- Estados de pantalla ---
+const ESTADO = { INICIO: "inicio", JUGANDO: "jugando", GAMEOVER: "gameover" };
+
+
+/* ==========================================================================
+   2) DATOS DEL NIVEL
+   Todo el nivel es data: editar estos arrays cambia el nivel sin tocar lógica.
+   ========================================================================== */
+
+// tipo "suelo" se dibuja macizo hasta abajo; tipo "plat" es una plataforma flotante
+const PLATAFORMAS_DATA = [
+  // ---- Suelo con huecos (los huecos obligan a saltar) ----
+  { x:    0, y: 480, w: 700, h: 60, tipo: "suelo" },
+  { x:  780, y: 480, w: 520, h: 60, tipo: "suelo" },
+  { x: 1420, y: 480, w: 580, h: 60, tipo: "suelo" },
+  { x: 2100, y: 480, w: 300, h: 60, tipo: "suelo" },
+
+  // ---- Plataformas flotantes (saltos de ~80-100px: siempre alcanzables) ----
+  { x:  260, y: 380, w: 140, h: 22, tipo: "plat" },
+  { x:  470, y: 290, w: 120, h: 22, tipo: "plat" },
+  { x:  690, y: 205, w: 130, h: 22, tipo: "plat" },
+  { x:  900, y: 365, w: 170, h: 22, tipo: "plat" },
+  { x: 1150, y: 270, w: 140, h: 22, tipo: "plat" },
+  { x: 1360, y: 190, w: 120, h: 22, tipo: "plat" },
+  { x: 1520, y: 370, w: 180, h: 22, tipo: "plat" },
+  { x: 1770, y: 280, w: 150, h: 22, tipo: "plat" },
+  { x: 2000, y: 200, w: 140, h: 22, tipo: "plat" },
+  { x: 2190, y: 350, w: 160, h: 22, tipo: "plat" }
+];
+
+// Coleccionables: "estrella" (+10, comunes) y "nota" (+25, raras y en lo alto)
+const COLECCIONABLES_DATA = [
+  { x:  150, y: 430, tipo: "estrella" },
+  { x:  310, y: 330, tipo: "estrella" },
+  { x:  360, y: 330, tipo: "estrella" },
+  { x:  510, y: 240, tipo: "estrella" },
+  { x:  740, y: 155, tipo: "nota"     },
+  { x:  850, y: 430, tipo: "estrella" },
+  { x:  950, y: 310, tipo: "estrella" },
+  { x: 1000, y: 310, tipo: "estrella" },
+  { x: 1195, y: 220, tipo: "estrella" },
+  { x: 1405, y: 140, tipo: "nota"     },
+  { x: 1470, y: 430, tipo: "estrella" },
+  { x: 1580, y: 310, tipo: "estrella" },
+  { x: 1640, y: 310, tipo: "estrella" },
+  { x: 1830, y: 230, tipo: "estrella" },
+  { x: 2050, y: 150, tipo: "nota"     },
+  { x: 2250, y: 300, tipo: "estrella" },
+  { x: 2330, y: 430, tipo: "estrella" }
+];
+
+// Enemigos: "bug" patrulla entre los bordes de su plataforma; "llama" es estática.
+// El campo "sobre" es el índice dentro de PLATAFORMAS_DATA donde se apoya.
+const ENEMIGOS_DATA = [
+  { tipo: "bug",   sobre: 0, x:  420, vel: 70 },
+  { tipo: "llama", sobre: 4, x:  330 },
+  { tipo: "bug",   sobre: 7, x:  950, vel: 60 },
+  { tipo: "llama", sobre: 8, x: 1215 },
+  { tipo: "bug",   sobre: 2, x: 1600, vel: 80 },
+  { tipo: "bug",   sobre: 10, x: 1600, vel: 55 },
+  { tipo: "llama", sobre: 11, x: 1840 },
+  { tipo: "bug",   sobre: 3, x: 2200, vel: 70 }
+];
+
+// Punto de aparición de Helena
+const SPAWN = { x: 60, y: 380 };
+
+
+/* ==========================================================================
+   3) ESTADO Y ENTIDADES
+   Todos los objetos se crean UNA vez al arrancar y se reutilizan (se "resetean")
+   en cada partida: cero basura para el recolector, cero memory leaks.
+   ========================================================================== */
+
+const canvas = document.getElementById("juego");
+const ctx = canvas.getContext("2d");
+ctx.imageSmoothingEnabled = false; // pixel art nítido
+
+let estado = ESTADO.INICIO;
+let puntaje = 0;
+let highScore = 0;            // <<< high score EN MEMORIA de sesión (nunca storage)
+let vidas = JUEGO.vidasIniciales;
+let tiempoTotal = 0;          // segundos acumulados: sirve para animaciones suaves
+
+// --- Combo ---
+let comboContador = 0;        // recogidas encadenadas
+let comboReloj = 0;           // s restantes de la ventana de combo
+
+// --- Cámara: sigue a Helena en X. shakeX/shakeY son el temblor de pantalla ---
+const camara = { x: 0, y: 0, shakeX: 0, shakeY: 0 };
+
+// --- Helena (el jugador) ---
+// Nota: el DIBUJO vive aparte en dibujarHelena(); acá sólo hay estado y física.
+const helena = {
+  x: SPAWN.x, y: SPAWN.y,
+  w: 26, h: 40,          // caja de colisión (AABB)
+  vx: 0, vy: 0,
+  enSuelo: false,
+  mirandoDerecha: true,
+  coyote: 0,             // s restantes de coyote time
+  buffer: 0,             // s restantes del jump buffer
+  invulnerable: 0,       // s restantes de invulnerabilidad
+
+  // --- Estado puramente VISUAL (paso 4). No afecta a la física. ---
+  animEstado: "idle",    // "idle" | "correr" | "salto" | "caida"
+  animFrame: 0,          // índice del frame actual dentro del ciclo
+  animReloj: 0,          // acumulador de tiempo para avanzar de frame
+  trenzaOffset: 0,       // inercia vertical del 1er segmento de la trenza
+  trenza2: 0,            // 2º segmento: sigue al primero con retardo
+  trenzaSway: 0,         // desplazamiento horizontal (la trenza queda atrás)
+  faldaSway: 0           // leve seguimiento de la falda
+};
+
+// --- Plataformas: copia viva de los datos (no se modifican, pero así queda claro) ---
+const plataformas = PLATAFORMAS_DATA.map(p => ({ ...p }));
+
+// --- Coleccionables: se crean una vez; "activo" se resetea por partida ---
+const coleccionables = COLECCIONABLES_DATA.map(c => ({
+  x: c.x, y: c.y,
+  w: c.tipo === "nota" ? 20 : 18,
+  h: c.tipo === "nota" ? 22 : 18,
+  tipo: c.tipo,
+  activo: true,
+  fase: Math.random() * Math.PI * 2   // desfase para que floten desincronizados
+}));
+
+// --- Enemigos: se crean una vez a partir de la plataforma donde se apoyan ---
+const enemigos = ENEMIGOS_DATA.map(e => {
+  const plat = PLATAFORMAS_DATA[e.sobre];
+  const w = e.tipo === "bug" ? 30 : 26;
+  const h = e.tipo === "bug" ? 20 : 30;
+  return {
+    tipo: e.tipo,
+    w, h,
+    // posición inicial: apoyado sobre la plataforma indicada
+    inicioX: e.x,
+    inicioY: plat.y - h,
+    x: e.x, y: plat.y - h,
+    vel: e.vel || 0,
+    dir: 1,
+    // límites de patrulla = bordes de su plataforma (con un pelín de margen)
+    minX: plat.x + 2,
+    maxX: plat.x + plat.w - w - 2,
+    fase: Math.random() * Math.PI * 2
+  };
+});
+
+/* --------------------------------------------------------------------------
+   FONDO PARALLAX — datos generados UNA sola vez al cargar la página.
+   Regla de oro de rendimiento: NUNCA se llama a Math.random() dentro de draw().
+   Usamos un generador pseudoaleatorio propio con semilla fija, así el skyline
+   se ve exactamente igual en cada partida (y en cada deploy).
+   -------------------------------------------------------------------------- */
+
+let _semilla = 20240914;               // cambiala y obtenés otro skyline
+function aleatorio() {
+  // Congruencial lineal: barato, determinista y suficiente para decorar
+  _semilla = (_semilla * 1664525 + 1013904223) % 4294967296;
+  return _semilla / 4294967296;
+}
+
+// --- Capa 1 (lenta): estrellas del cielo nocturno ---
+const CAPA_ESTRELLAS = [];
+for (let i = 0; i < 120; i++) {
+  CAPA_ESTRELLAS.push({
+    x: aleatorio() * PARALLAX.patron,
+    y: aleatorio() * 340,
+    r: 0.6 + aleatorio() * 1.4,
+    fase: aleatorio() * Math.PI * 2   // desfase del titileo
+  });
+}
+
+// --- Capa 2 (media): siluetas de edificios con ventanas encendidas ---
+const CAPA_CIUDAD = [];
+{
+  let cursor = 6;
+  while (cursor < PARALLAX.patron - 70) {
+    const w = 44 + Math.floor(aleatorio() * 66);
+    if (cursor + w > PARALLAX.patron - 6) break;  // que el patrón cierre sin cortes
+    const h = 80 + Math.floor(aleatorio() * 150);
+    const edificio = { x: cursor, w: w, h: h, antena: aleatorio() < 0.45, ventanas: [] };
+
+    // Ventanas en grilla, precalculadas (posición + color + desfase de titileo)
+    for (let vy = 14; vy < h - 12; vy += 18) {
+      for (let vx = 8; vx < w - 12; vx += 15) {
+        if (aleatorio() < 0.42) {
+          edificio.ventanas.push({
+            x: vx, y: vy,
+            rosa: aleatorio() < 0.5,
+            fase: aleatorio() * Math.PI * 2
+          });
+        }
+      }
+    }
+    CAPA_CIUDAD.push(edificio);
+    cursor += w + 12 + Math.floor(aleatorio() * 30);
+  }
+}
+
+// --- Capa 3 (rápida): reflectores de escenario + guirnalda de bombillas ---
+const CAPA_REFLECTORES = [];
+for (let i = 0; i < 6; i++) {
+  CAPA_REFLECTORES.push({
+    x: 70 + i * (PARALLAX.patron / 6) + aleatorio() * 40,
+    color: i % 3,                       // índice dentro de GRAD_REFLECTOR
+    ancho: 60 + aleatorio() * 45,       // apertura del haz
+    vel: 0.35 + aleatorio() * 0.35,     // velocidad del vaivén
+    fase: aleatorio() * Math.PI * 2
+  });
+}
+
+const CAPA_BOMBILLAS = [];
+for (let i = 0; i < 24; i++) {
+  CAPA_BOMBILLAS.push({
+    x: i * (PARALLAX.patron / 24) + 10,
+    fase: aleatorio() * Math.PI * 2
+  });
+}
+
+/* Degradados creados UNA vez y reutilizados en cada frame (cero basura).
+   Van definidos sobre el eje Y local del haz: al rotarlo, el degradado rota
+   con él porque las coordenadas del gradiente se transforman al pintar. */
+const LARGO_HAZ = 470;
+const GRAD_REFLECTOR = [
+  ["rgba(255, 79, 163, .20)", "rgba(255, 79, 163, 0)"],
+  ["rgba(86, 232, 255, .18)", "rgba(86, 232, 255, 0)"],
+  ["rgba(157, 111, 255, .18)", "rgba(157, 111, 255, 0)"]
+].map(par => {
+  const g = ctx.createLinearGradient(0, 0, 0, LARGO_HAZ);
+  g.addColorStop(0, par[0]);
+  g.addColorStop(1, par[1]);
+  return g;
+});
+
+// Halo de la luna (radial, también creado una sola vez)
+const GRAD_LUNA = ctx.createRadialGradient(0, 0, 6, 0, 0, 60);
+GRAD_LUNA.addColorStop(0, "rgba(255, 200, 235, .35)");
+GRAD_LUNA.addColorStop(1, "rgba(255, 143, 205, 0)");
+
+/* ==========================================================================
+   POOL DE PARTÍCULAS
+   --------------------------------------------------------------------------
+   Idea clave (y requisito de la spec): el array se reserva UNA vez al arrancar
+   y jamás crece. Cada partícula tiene un flag `viva`; emitir = buscar una
+   muerta y reescribir sus campos. Si están todas ocupadas, simplemente no se
+   emite. Así no se crean objetos en cada frame y no hay memory leaks: el juego
+   puede correr 10 minutos o 10 horas usando siempre la misma memoria.
+   ========================================================================== */
+
+const particulas = new Array(JUICE.maxParticulas);
+for (let i = 0; i < JUICE.maxParticulas; i++) {
+  particulas[i] = {
+    viva: false,
+    x: 0, y: 0,          // posición en el MUNDO (les afecta la cámara)
+    vx: 0, vy: 0,        // velocidad px/s
+    gravedad: 0,         // px/s² propia de la partícula
+    roce: 0,             // frenado horizontal (el polvo frena mucho, la chispa poco)
+    vida: 0, vidaMax: 0, // segundos restantes / totales (para el fade)
+    tam: 0,              // tamaño inicial en px (decrece con la vida)
+    forma: 0,            // 0 = cuadradito, 1 = estrellita
+    color: "#ffffff"
+  };
+}
+let cursorParticula = 0;  // desde dónde buscamos la próxima libre (round-robin)
+
+/** Enciende una partícula libre del pool. Si no hay ninguna, no hace nada. */
+function emitirParticula(x, y, vx, vy, vida, tam, color, gravedad, forma, roce) {
+  for (let intento = 0; intento < particulas.length; intento++) {
+    const p = particulas[cursorParticula];
+    cursorParticula = (cursorParticula + 1) % particulas.length;
+    if (p.viva) continue;
+
+    p.viva = true;
+    p.x = x;  p.y = y;
+    p.vx = vx; p.vy = vy;
+    p.vida = vida; p.vidaMax = vida;
+    p.tam = tam;
+    p.color = color;
+    p.gravedad = gravedad;
+    p.forma = forma;
+    p.roce = roce;
+    return;
+  }
+  // Pool lleno: descartamos el efecto antes que agrandar el array
+}
+
+/* ==========================================================================
+   POOL DE TEXTOS FLOTANTES ("+10", "COMBO!") — mismo criterio que arriba
+   ========================================================================== */
+
+const textos = new Array(JUICE.maxTextos);
+for (let i = 0; i < JUICE.maxTextos; i++) {
+  textos[i] = { viva: false, x: 0, y: 0, texto: "", color: "#ffffff", fuente: FUENTE_PUNTOS, vida: 0, vidaMax: 0 };
+}
+let cursorTexto = 0;
+
+/** Enciende un texto flotante libre del pool */
+function emitirTexto(x, y, texto, color, fuente) {
+  for (let intento = 0; intento < textos.length; intento++) {
+    const t = textos[cursorTexto];
+    cursorTexto = (cursorTexto + 1) % textos.length;
+    if (t.viva) continue;
+
+    t.viva = true;
+    t.x = x; t.y = y;
+    t.texto = texto;      // el string se arma sólo al recoger, nunca por frame
+    t.color = color;
+    t.fuente = fuente;
+    t.vida = JUICE.textoVida;
+    t.vidaMax = JUICE.textoVida;
+    return;
+  }
+}
+
+/* ==========================================================================
+   SCREEN SHAKE — la cámara ya aplica camara.shakeX/shakeY en el draw
+   ========================================================================== */
+
+let shakeReloj = 0;   // segundos restantes de temblor
+
+/** Arranca (o refuerza) el temblor de pantalla */
+function dispararShake(duracion) {
+  if (duracion > shakeReloj) shakeReloj = duracion;
+}
+
+/* ==========================================================================
+   EFECTOS — los "hooks" que la lógica del juego invoca. Toda la parte
+   decorativa vive acá: si se borran estas tres funciones, el juego se sigue
+   jugando exactamente igual, sólo que sin fuegos artificiales.
+   ========================================================================== */
+
+/** Burst de estrellitas + texto flotante al recoger un coleccionable */
+function efectoRecoger(x, y, tipo, puntos, esCombo) {
+  const color = (tipo === "nota") ? COLOR.nota : COLOR.estrella;
+
+  // Las estrellitas salen en abanico (ángulos repartidos + un pelín de azar)
+  for (let i = 0; i < JUICE.partRecoger; i++) {
+    const angulo = (Math.PI * 2 * i) / JUICE.partRecoger + Math.random() * 0.5;
+    const vel = 70 + Math.random() * 90;
+    emitirParticula(
+      x, y,
+      Math.cos(angulo) * vel,
+      Math.sin(angulo) * vel - 45,        // empujón extra hacia arriba
+      0.45 + Math.random() * 0.30,        // vida
+      5,                                  // tamaño
+      color, 280, 1, 1.6                  // gravedad, forma estrellita, roce
+    );
+  }
+
+  emitirTexto(x, y - 8, "+" + puntos, color, FUENTE_PUNTOS);
+  if (esCombo) emitirTexto(x, y - 30, "COMBO!", COLOR.neonRosa, FUENTE_COMBO);
+
+  // Sonido: acorde brillante para la nota musical, tono ascendente para la
+  // estrella, y el arpegio del combo encima cuando se dispara el x2.
+  if (tipo === "nota") sonidoNota();
+  else                 sonidoEstrella();
+  if (esCombo) sonidoCombo();
+}
+
+/** Chispas + screen shake al recibir daño */
+function efectoDanio(x, y) {
+  for (let i = 0; i < JUICE.partDanio; i++) {
+    const angulo = Math.random() * Math.PI * 2;
+    const vel = 90 + Math.random() * 170;
+    emitirParticula(
+      x, y,
+      Math.cos(angulo) * vel,
+      Math.sin(angulo) * vel - 60,
+      0.28 + Math.random() * 0.25,
+      3,
+      (i % 2 === 0) ? COLOR.neonRosa : COLOR.corazon,
+      720, 0, 0.9
+    );
+  }
+  dispararShake(JUICE.shakeDuracion);
+  sonidoDanio();
+}
+
+/** Polvillo al aterrizar — sólo si venía cayendo fuerte */
+function efectoAterrizar(x, y, velImpacto) {
+  if (velImpacto < JUICE.velCaidaPolvo) return;   // los pasitos no levantan polvo
+
+  // Cuanto más fuerte el golpe, más y más rápido sale el polvo
+  const fuerza = Math.min(1.6, velImpacto / JUICE.velCaidaPolvo);
+  for (let i = 0; i < JUICE.partPolvo; i++) {
+    const lado = (i % 2 === 0) ? -1 : 1;          // mitad para cada costado
+    const vel = (45 + Math.random() * 75) * fuerza;
+    emitirParticula(
+      x + lado * (2 + Math.random() * 6), y - 2,
+      lado * vel,
+      -20 - Math.random() * 40,
+      0.25 + Math.random() * 0.25,
+      4,
+      COLOR.polvo, 240, 0, 4.5                     // roce alto: frena enseguida
+    );
+  }
+}
+
+
+/* ==========================================================================
+   4) INPUT — teclado + botones táctiles
+   Guardamos el estado de las teclas en un objeto simple; la lógica lo consulta.
+   ========================================================================== */
+
+const teclas = { izq: false, der: false, salto: false };
+let saltoRecienPresionado = false; // flanco de subida: sólo el frame en que se aprieta
+
+function presionar(accion) {
+  // Cualquier pulsación sirve como "primera interacción" para habilitar el
+  // audio (requisito de los navegadores). Si ya está creado, no hace nada.
+  iniciarAudio();
+
+  if (accion === "izq")   teclas.izq = true;
+  if (accion === "der")   teclas.der = true;
+  if (accion === "salto") {
+    if (!teclas.salto) saltoRecienPresionado = true; // sólo al pasar de suelto a apretado
+    teclas.salto = true;
+  }
+}
+
+function soltar(accion) {
+  if (accion === "izq")   teclas.izq = false;
+  if (accion === "der")   teclas.der = false;
+  if (accion === "salto") teclas.salto = false;
+}
+
+// --- Teclado ---
+window.addEventListener("keydown", (ev) => {
+  // Si el jugador está cargando sus iniciales en el game over, el teclado es
+  // para eso: la tecla se consume y NO llega a los controles del juego.
+  // (ESPACIO queda afuera a propósito: sigue reiniciando la partida.)
+  if (capturarTeclaIniciales(ev)) {
+    ev.preventDefault();
+    return;
+  }
+
+  switch (ev.code) {
+    case "ArrowLeft":  case "KeyA": presionar("izq");   ev.preventDefault(); break;
+    case "ArrowRight": case "KeyD": presionar("der");   ev.preventDefault(); break;
+    case "Space": case "ArrowUp": case "KeyW":
+      presionar("salto"); ev.preventDefault(); break;
+    // M = silenciar / activar el sonido
+    case "KeyM":
+      if (!ev.repeat) { iniciarAudio(); alternarMute(); }
+      ev.preventDefault();
+      break;
+  }
+});
+
+window.addEventListener("keyup", (ev) => {
+  switch (ev.code) {
+    case "ArrowLeft":  case "KeyA": soltar("izq");   break;
+    case "ArrowRight": case "KeyD": soltar("der");   break;
+    case "Space": case "ArrowUp": case "KeyW": soltar("salto"); break;
+  }
+});
+
+// Si la ventana pierde el foco, soltamos todo (evita que Helena quede corriendo sola)
+window.addEventListener("blur", () => { teclas.izq = teclas.der = teclas.salto = false; });
+
+// --- Botones táctiles: pointer events cubren mouse, touch y lápiz ---
+function conectarBoton(id, accion) {
+  const el = document.getElementById(id);
+  const abajo = (ev) => { ev.preventDefault(); el.classList.add("activo");    presionar(accion); };
+  const arriba = (ev) => { ev.preventDefault(); el.classList.remove("activo"); soltar(accion);  };
+  el.addEventListener("pointerdown",   abajo);
+  el.addEventListener("pointerup",     arriba);
+  el.addEventListener("pointercancel", arriba);
+  el.addEventListener("pointerleave",  arriba);
+  el.addEventListener("contextmenu", (ev) => ev.preventDefault());
+}
+conectarBoton("btnIzq", "izq");
+conectarBoton("btnDer", "der");
+conectarBoton("btnSaltar", "salto");
+
+// Tocar el canvas también sirve para arrancar/reiniciar desde móvil
+canvas.addEventListener("pointerdown", (ev) => {
+  ev.preventDefault();
+  if (estado !== ESTADO.JUGANDO) presionar("salto");
+});
+canvas.addEventListener("pointerup", (ev) => {
+  ev.preventDefault();
+  // Siempre soltamos: si no, al arrancar la partida con un toque la tecla
+  // quedaría "pegada" en true y Helena saltaría sola.
+  soltar("salto");
+});
+
+
+/* ==========================================================================
+   4b) AUDIO — WebAudio generado por código (cero archivos, cero assets)
+   --------------------------------------------------------------------------
+   Dos reglas que ordenan todo este bloque:
+
+   1) El AudioContext NO se puede crear al cargar la página: los navegadores
+      bloquean el audio hasta que el usuario interactúa. Por eso se crea dentro
+      de iniciarAudio(), que se llama desde los handlers de input.
+
+   2) El audio es DECORATIVO: si el navegador lo bloquea, no soporta WebAudio o
+      algo falla, el juego tiene que seguir andando igual. Por eso todo va
+      envuelto en try/catch y con chequeos de null: nada de acá puede tirar
+      abajo el game loop.
+   ========================================================================== */
+
+let audioCtx = null;          // se crea en la primera interacción del usuario
+let audioMaster = null;       // nodo de volumen general (el "mute" vive acá)
+let audioSilenciado = false;  // estado de sesión: NUNCA localStorage
+const btnMute = document.getElementById("btnMute");
+
+/** Crea el contexto la primera vez; después sólo lo reanuda si quedó dormido */
+function iniciarAudio() {
+  try {
+    if (audioCtx) {
+      // Algunos navegadores lo suspenden al volver de otra pestaña
+      if (audioCtx.state === "suspended") audioCtx.resume().catch(() => {});
+      return;
+    }
+    const Contexto = window.AudioContext || window.webkitAudioContext;
+    if (!Contexto) return;            // navegador sin WebAudio: seguimos mudos
+
+    audioCtx = new Contexto();
+    audioMaster = audioCtx.createGain();
+    audioMaster.gain.value = audioSilenciado ? 0.0001 : AUDIO.volumenMaestro;
+    audioMaster.connect(audioCtx.destination);
+
+    if (audioCtx.state === "suspended") audioCtx.resume().catch(() => {});
+  } catch (e) {
+    audioCtx = null;                  // si algo salió mal, jugamos sin sonido
+    audioMaster = null;
+  }
+}
+
+/**
+ * Toca UN tono. Es el ladrillo con el que se arman todos los efectos.
+ *
+ * @param {string} tipo        forma de onda: "sine" | "triangle" | "square" | "sawtooth"
+ * @param {number|number[]} hz frecuencia fija, o lista por la que se desliza
+ * @param {number} retardo     segundos de espera antes de sonar
+ * @param {number} duracion    segundos que dura la nota
+ * @param {number} volumen     0..1 (se multiplica por el volumen maestro)
+ *
+ * Ciclo de vida: el oscilador SIEMPRE arranca con start() y termina con un
+ * stop() de tiempo definido, y en onended se desconecta. Así no quedan nodos
+ * colgados ni sonando: se pueden disparar miles de notas sin acumular nada.
+ */
+function tocarTono(tipo, hz, retardo, duracion, volumen) {
+  if (!audioCtx || !audioMaster || audioSilenciado) return;
+  try {
+    const t0 = audioCtx.currentTime + retardo;
+    const osc = audioCtx.createOscillator();
+    const env = audioCtx.createGain();
+
+    osc.type = tipo;
+
+    // Frecuencia: un valor suelto o un barrido por varios valores
+    if (typeof hz === "number") {
+      osc.frequency.setValueAtTime(hz, t0);
+    } else {
+      osc.frequency.setValueAtTime(hz[0], t0);
+      for (let i = 1; i < hz.length; i++) {
+        const cuando = t0 + duracion * (i / (hz.length - 1));
+        osc.frequency.exponentialRampToValueAtTime(Math.max(1, hz[i]), cuando);
+      }
+    }
+
+    // Envolvente attack/release: sin esto se escucha un "click" al empezar
+    // y al cortar. Ojo: exponentialRamp no admite 0, por eso usamos 0.0001.
+    env.gain.setValueAtTime(0.0001, t0);
+    env.gain.exponentialRampToValueAtTime(Math.max(0.0002, volumen), t0 + AUDIO.ataque);
+    env.gain.exponentialRampToValueAtTime(0.0001, t0 + duracion);
+
+    osc.connect(env);
+    env.connect(audioMaster);
+
+    osc.start(t0);
+    osc.stop(t0 + duracion + AUDIO.release);   // fin SIEMPRE definido
+    osc.onended = () => {
+      // Al terminar soltamos los nodos para que el recolector se los lleve
+      try { osc.disconnect(); env.disconnect(); } catch (e) { /* ya desconectado */ }
+    };
+  } catch (e) {
+    /* Un fallo de audio nunca debe romper el juego */
+  }
+}
+
+// ---------- Los efectos concretos ----------
+
+/** ⭐ tono corto ascendente */
+function sonidoEstrella() {
+  tocarTono("triangle", AUDIO.estrellaBarrido, 0, AUDIO.estrellaDur, 0.5);
+}
+
+/** 🎵 acorde brillante: las cuatro notas casi juntas, cada una más suave */
+function sonidoNota() {
+  for (let i = 0; i < AUDIO.notaAcorde.length; i++) {
+    tocarTono("triangle", AUDIO.notaAcorde[i], i * 0.012, AUDIO.notaDur, 0.30 - i * 0.05);
+  }
+}
+
+/** Combo x2: arpegio agudo y rápido */
+function sonidoCombo() {
+  for (let i = 0; i < AUDIO.comboArpegio.length; i++) {
+    tocarTono("square", AUDIO.comboArpegio[i], i * AUDIO.comboPaso, AUDIO.comboDur, 0.16);
+  }
+}
+
+/** "Boing" grave al saltar */
+function sonidoSalto() {
+  tocarTono("sine", AUDIO.saltoBarrido, 0, AUDIO.saltoDur, 0.42);
+}
+
+/** Buzz al recibir daño: dos capas ásperas cayendo en picada */
+function sonidoDanio() {
+  tocarTono("sawtooth", AUDIO.danioBarrido,  0, AUDIO.danioDur, 0.32);
+  tocarTono("square",   AUDIO.danioBarrido2, 0, AUDIO.danioDur * 0.7, 0.16);
+}
+
+/** Game over: cuatro notas que bajan, después del buzz del golpe final */
+function sonidoGameOver() {
+  for (let i = 0; i < AUDIO.gameOverNotas.length; i++) {
+    tocarTono("triangle", AUDIO.gameOverNotas[i],
+              AUDIO.gameOverRetardo + i * AUDIO.gameOverPaso,
+              AUDIO.gameOverDur, 0.30);
+  }
+}
+
+// ---------- Mute ----------
+
+/** Refleja el estado del silencio en el botón */
+function actualizarBotonMute() {
+  if (!btnMute) return;
+  // 128266 = altavoz con ondas, 128263 = altavoz tachado
+  btnMute.innerHTML = audioSilenciado ? "&#128263;" : "&#128266;";
+  btnMute.classList.toggle("silenciado", audioSilenciado);
+  btnMute.setAttribute("aria-label", audioSilenciado ? "Activar sonido" : "Silenciar");
+}
+
+/** Alterna silencio con una rampa cortita (cortar de golpe hace "click") */
+function alternarMute() {
+  audioSilenciado = !audioSilenciado;
+  try {
+    if (audioCtx && audioMaster) {
+      const t = audioCtx.currentTime;
+      audioMaster.gain.cancelScheduledValues(t);
+      audioMaster.gain.setValueAtTime(audioMaster.gain.value, t);
+      audioMaster.gain.linearRampToValueAtTime(
+        audioSilenciado ? 0.0001 : AUDIO.volumenMaestro, t + 0.05);
+    }
+  } catch (e) { /* sin audio, el flag alcanza */ }
+  actualizarBotonMute();
+}
+
+if (btnMute) {
+  btnMute.addEventListener("click", () => {
+    iniciarAudio();   // el click también sirve como primera interacción
+    alternarMute();
+    btnMute.blur();   // que la barra espacio no vuelva a apretar el botón
+  });
+  actualizarBotonMute();   // deja el ícono acorde al estado inicial
+}
+
+
+/* ==========================================================================
+   4c) RED — cliente del leaderboard global (MEJORA PROGRESIVA)
+   --------------------------------------------------------------------------
+   La regla que manda sobre todo lo demás: el juego tiene que ser 100% jugable
+   sin red y abierto con file://. Este módulo es un adorno que se enciende sólo
+   si la API contesta. En concreto:
+
+   - Si estamos en file://, ni siquiera se intenta la petición.
+   - Un único sondeo al arrancar. Si falla, `apiDisponible` queda en false para
+     toda la sesión y no se reintenta nunca más (nada de reintentos en loop).
+   - Todo fetch lleva AbortController con timeout corto: ninguna petición puede
+     colgar el juego, porque además NADA del gameplay espera una respuesta.
+   - Todo va en try/catch y los errores se tragan en silencio.
+
+   Contrato de la API (fijado por el backend):
+     POST /api/scores            {player:"ABC", score:1234} -> 201 {rank, best}
+     GET  /api/leaderboard?limit=5 -> 200 {entries:[{rank, player, score, at}]}
+   ========================================================================== */
+
+let apiDisponible = false;   // sólo pasa a true si el sondeo inicial responde bien
+const leaderboard = [];      // top N ya saneado: {rank, player, score}
+
+// Estados de la entrada de iniciales del game over
+const ENVIO = {
+  INACTIVO : "inactivo",   // sin API: no se muestra nada
+  EDITANDO : "editando",   // el jugador está cargando sus iniciales
+  ENVIANDO : "enviando",   // petición en vuelo
+  OK       : "ok",         // el servidor confirmó y devolvió el puesto
+  ERROR    : "error"       // falló: se avisa discreto y no pasa nada más
+};
+let envioEstado = ENVIO.INACTIVO;
+let envioRank   = 0;         // puesto devuelto por el servidor
+let puntajeFinal = 0;        // puntaje congelado al morir (el vivo se resetea)
+let envioToken  = 0;         // invalida respuestas de partidas ya abandonadas
+
+// Mensaje bajo las casillas. Se guarda armado en cada transición en vez de
+// construirlo en draw(): así la pantalla no genera strings en cada frame.
+const MSG_EDITANDO = "↑↓ LETRA    ←→ CASILLA    ENTER ENVIAR";
+const MSG_ENVIANDO = "ENVIANDO...";
+const MSG_ERROR    = "SIN CONEXION";
+let envioMensaje = "";
+
+// Iniciales estilo arcade. Array fijo que se muta: se conservan entre partidas
+// para no tener que volver a tipearlas cada vez.
+const iniciales = ["A", "A", "A"];
+let inicialSel = 0;          // casilla activa (0..2)
+
+/**
+ * fetch con timeout y a prueba de balas. Devuelve el JSON o null.
+ * NUNCA lanza: cualquier problema (red caída, timeout, 404, JSON inválido)
+ * se traduce en null y el que llama decide qué hacer.
+ */
+async function pedirJSON(ruta, opciones) {
+  // Abierto como archivo local: no hay servidor al que pedirle nada
+  if (location.protocol === "file:") return null;
+
+  const controlador = new AbortController();
+  const reloj = setTimeout(() => controlador.abort(), API_TIMEOUT);
+  try {
+    const respuesta = await fetch(API_BASE + ruta, {
+      method: opciones.method,
+      headers: opciones.headers,
+      body: opciones.body,
+      signal: controlador.signal,
+      cache: "no-store"
+    });
+    if (!respuesta.ok) return null;      // 4xx/5xx: para nosotros es "no hay datos"
+    return await respuesta.json();
+  } catch (e) {
+    return null;                          // abort, red caída, CORS, JSON roto...
+  } finally {
+    clearTimeout(reloj);                  // sin timers colgados
+  }
+}
+
+/**
+ * Copia las entradas del servidor al array local SANEÁNDOLAS.
+ * El endpoint es público, así que no confiamos en lo que llega: recortamos el
+ * nombre a 3 caracteres y forzamos los números, para que un dato hostil no
+ * pueda romper el dibujo de la pantalla.
+ */
+function guardarEntradas(entries) {
+  leaderboard.length = 0;                 // reutilizamos el array
+  for (let i = 0; i < entries.length && leaderboard.length < API_TOP_LIMIT; i++) {
+    const e = entries[i];
+    if (!e || typeof e !== "object") continue;
+
+    const player = String(e.player == null ? "???" : e.player)
+                     .toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, INICIALES_LARGO) || "???";
+    const score = Math.max(0, Math.min(1000000, Math.floor(Number(e.score)) || 0));
+    const rank  = Math.max(1, Math.floor(Number(e.rank)) || (i + 1));
+    leaderboard.push({ rank: rank, player: player, score: score });
+  }
+}
+
+/** Sondeo ÚNICO al arrancar: decide si el leaderboard existe para esta sesión */
+async function sondearAPI() {
+  // Con file:// no hay servidor: nos ahorramos hasta el intento
+  if (location.protocol === "file:") { apiDisponible = false; return; }
+
+  const datos = await pedirJSON("/leaderboard?limit=" + API_TOP_LIMIT, { method: "GET" });
+  if (!datos || !Array.isArray(datos.entries)) {
+    apiDisponible = false;                // se apaga para toda la sesión
+    return;
+  }
+  apiDisponible = true;
+  guardarEntradas(datos.entries);
+}
+
+/** Envía el puntaje con las iniciales cargadas. Nada del juego lo espera. */
+async function enviarPuntaje() {
+  if (!apiDisponible || envioEstado !== ENVIO.EDITANDO) return;
+
+  const nombre = iniciales.join("");
+  // Validamos igual que el servidor para no gastar una petición al pedo
+  if (!/^[A-Z0-9]{1,3}$/.test(nombre)) {
+    envioEstado = ENVIO.ERROR;
+    envioMensaje = MSG_ERROR;
+    return;
+  }
+
+  const token = envioToken;               // foto del momento del envío
+  envioEstado = ENVIO.ENVIANDO;
+  envioMensaje = MSG_ENVIANDO;
+
+  const datos = await pedirJSON("/scores", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ player: nombre, score: puntajeFinal })
+  });
+
+  // Si mientras tanto el jugador arrancó otra partida, la respuesta ya no sirve
+  if (token !== envioToken) return;
+
+  if (!datos) {
+    envioEstado = ENVIO.ERROR;
+    envioMensaje = MSG_ERROR;
+    return;
+  }
+  envioRank = Math.max(0, Math.floor(Number(datos.rank)) || 0);
+  envioEstado = ENVIO.OK;
+  // Este string se arma UNA vez, no en cada frame del dibujo
+  envioMensaje = envioRank > 0 ? ("TU PUESTO: #" + envioRank) : "PUNTAJE ENVIADO";
+
+  // Y de paso refrescamos el top para que se vea el puntaje recién cargado
+  const top = await pedirJSON("/leaderboard?limit=" + API_TOP_LIMIT, { method: "GET" });
+  if (token !== envioToken) return;
+  if (top && Array.isArray(top.entries)) guardarEntradas(top.entries);
+}
+
+/**
+ * Teclado de la entrada de iniciales. Devuelve true si consumió la tecla,
+ * para que el handler principal NO la interprete como control del juego
+ * (si no, la flecha ↑ dispararía el salto y reiniciaría la partida).
+ * Ojo: ESPACIO no se consume nunca, así sigue reiniciando como siempre.
+ */
+function capturarTeclaIniciales(ev) {
+  if (envioEstado !== ENVIO.EDITANDO) return false;
+
+  // Mover el carácter de la casilla activa
+  if (ev.code === "ArrowUp" || ev.code === "ArrowDown") {
+    const paso = (ev.code === "ArrowUp") ? 1 : -1;
+    const pos = ALFABETO.indexOf(iniciales[inicialSel]);
+    const nueva = (pos + paso + ALFABETO.length) % ALFABETO.length;
+    iniciales[inicialSel] = ALFABETO.charAt(nueva);
+    return true;
+  }
+
+  // Moverse entre casillas
+  if (ev.code === "ArrowLeft") {
+    inicialSel = (inicialSel + INICIALES_LARGO - 1) % INICIALES_LARGO;
+    return true;
+  }
+  if (ev.code === "ArrowRight") {
+    inicialSel = (inicialSel + 1) % INICIALES_LARGO;
+    return true;
+  }
+
+  // Confirmar y enviar
+  if (ev.code === "Enter" || ev.code === "NumpadEnter") {
+    // "Disparar y olvidar": nadie espera la respuesta. El .catch() garantiza
+    // que ni siquiera una promesa rechazada ensucie la consola.
+    enviarPuntaje().catch(() => {});
+    return true;
+  }
+
+  // Borrar = retroceder una casilla
+  if (ev.code === "Backspace") {
+    inicialSel = Math.max(0, inicialSel - 1);
+    return true;
+  }
+
+  // Tipear directo: letras A-Z y dígitos 0-9
+  if (ev.key && ev.key.length === 1) {
+    const caracter = ev.key.toUpperCase();
+    if (ALFABETO.indexOf(caracter) >= 0) {
+      iniciales[inicialSel] = caracter;
+      // Avanzamos sola la casilla, como en los arcades
+      if (inicialSel < INICIALES_LARGO - 1) inicialSel++;
+      return true;
+    }
+  }
+
+  return false;   // cualquier otra tecla sigue su curso normal
+}
+
+
+/* ==========================================================================
+   5) UPDATE — toda la lógica, siempre en función de dt (segundos)
+   ========================================================================== */
+
+/** ¿Se solapan dos cajas AABB? */
+function solapan(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x &&
+         a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+/**
+ * Mueve una entidad resolviendo colisiones sólidas contra las plataformas.
+ * Claves para que NUNCA atraviese nada:
+ *   - se resuelve el eje X y el eje Y por SEPARADO
+ *   - el movimiento se parte en sub-pasos de como mucho `pasoMaxColision` px,
+ *     así ni cayendo a máxima velocidad se "teletransporta" a través del piso.
+ */
+function moverYColisionar(e, dt) {
+  const dx = e.vx * dt;
+  const dy = e.vy * dt;
+  // Guardamos la velocidad de caída ANTES de resolver: al aterrizar, vy ya
+  // vale 0 y el efecto de polvo necesita saber con cuánta fuerza cayó.
+  const vyImpacto = e.vy;
+
+  const distancia = Math.max(Math.abs(dx), Math.abs(dy));
+  const pasos = Math.max(1, Math.ceil(distancia / FIS.pasoMaxColision));
+  const px = dx / pasos;
+  const py = dy / pasos;
+
+  const estabaEnSuelo = e.enSuelo;
+  e.enSuelo = false;
+
+  for (let paso = 0; paso < pasos; paso++) {
+    // ---------- Eje X ----------
+    e.x += px;
+    if (px !== 0) {
+      for (let i = 0; i < plataformas.length; i++) {
+        const p = plataformas[i];
+        if (!solapan(e, p)) continue;
+        if (px > 0) e.x = p.x - e.w;       // venía de la izquierda: lo pego al borde izq.
+        else        e.x = p.x + p.w;       // venía de la derecha
+        e.vx = 0;
+      }
+    }
+
+    // ---------- Eje Y ----------
+    e.y += py;
+    if (py !== 0) {
+      for (let i = 0; i < plataformas.length; i++) {
+        const p = plataformas[i];
+        if (!solapan(e, p)) continue;
+        if (py > 0) {                      // cayendo: aterriza sobre la plataforma
+          e.y = p.y - e.h;
+          e.vy = 0;
+          e.enSuelo = true;
+        } else {                           // subiendo: se golpea la cabeza
+          e.y = p.y + p.h;
+          e.vy = 0;
+        }
+      }
+    }
+  }
+
+  // Paredes invisibles a los costados del nivel
+  if (e.x < 0) { e.x = 0; e.vx = 0; }
+  if (e.x + e.w > ANCHO_NIVEL) { e.x = ANCHO_NIVEL - e.w; e.vx = 0; }
+
+  // Aterrizaje "fresco" (venía por el aire y tocó suelo) → polvillo
+  if (!estabaEnSuelo && e.enSuelo) efectoAterrizar(e.x + e.w / 2, e.y + e.h, vyImpacto);
+}
+
+/** Física + game feel de Helena */
+function actualizarHelena(dt) {
+  // ---------- Movimiento horizontal con aceleración/frenado ----------
+  const acel  = helena.enSuelo ? FIS.acelSuelo  : FIS.acelAire;
+  const freno = helena.enSuelo ? FIS.frenoSuelo : FIS.frenoAire;
+  const dir = (teclas.der ? 1 : 0) - (teclas.izq ? 1 : 0);
+
+  if (dir !== 0) {
+    helena.vx += dir * acel * dt;
+    if (helena.vx >  FIS.velMax) helena.vx =  FIS.velMax;
+    if (helena.vx < -FIS.velMax) helena.vx = -FIS.velMax;
+    helena.mirandoDerecha = dir > 0;
+  } else {
+    // Sin input: frenamos hacia 0 sin pasarnos de largo
+    if (helena.vx > 0) helena.vx = Math.max(0, helena.vx - freno * dt);
+    else if (helena.vx < 0) helena.vx = Math.min(0, helena.vx + freno * dt);
+  }
+
+  // ---------- GAME FEEL ----------
+  // Coyote time: se recarga en el piso y se descuenta en el aire.
+  if (helena.enSuelo) helena.coyote = FEEL.coyote;
+  else helena.coyote = Math.max(0, helena.coyote - dt);
+
+  // Jump buffer: al apretar salto arrancamos un temporizador; si aterriza dentro
+  // de esa ventana, el salto se ejecuta igual (perdona el apretón anticipado).
+  if (saltoRecienPresionado) helena.buffer = FEEL.buffer;
+  else helena.buffer = Math.max(0, helena.buffer - dt);
+
+  // ¿Salta? Hay intención bufferizada Y (está en el piso o le queda coyote)
+  if (helena.buffer > 0 && helena.coyote > 0) {
+    helena.vy = -FIS.velSalto;
+    helena.enSuelo = false;
+    helena.buffer = 0;
+    helena.coyote = 0;
+    helena.trenzaOffset = 2.5;   // tirón visual: la trenza se queda atrás al despegar
+    sonidoSalto();               // "boing" grave
+  }
+
+  // Salto variable: si soltó la tecla mientras sube, LIMITAMOS la velocidad de
+  // subida. Es un tope (no una multiplicación por frame), así el resultado es
+  // idéntico a 30 o a 144 fps: soltar temprano = salto corto, mantener = alto.
+  const topeSubida = -FIS.velSalto * FEEL.corteSalto;
+  if (!teclas.salto && helena.vy < topeSubida) {
+    helena.vy = topeSubida;
+  }
+
+  // ---------- Gravedad ----------
+  helena.vy += FIS.gravedad * dt;
+  if (helena.vy > FIS.velCaidaMax) helena.vy = FIS.velCaidaMax;
+
+  // ---------- Colisiones ----------
+  moverYColisionar(helena, dt);
+
+  // ---------- Timers y animación ----------
+  if (helena.invulnerable > 0) helena.invulnerable = Math.max(0, helena.invulnerable - dt);
+  actualizarVisualHelena(dt);   // sólo apariencia: frames, trenza y falda
+
+  // ---------- Caída al vacío ----------
+  // Ojo: el vacío ignora la invulnerabilidad (si no, quedaría cayendo infinito
+  // cuando cae al pozo justo después de un golpe).
+  if (helena.y > ALTO_NIVEL + 80) {
+    helena.invulnerable = 0;
+    recibirDanio(0);
+  }
+}
+
+/**
+ * Estado VISUAL de Helena: elige la animación, avanza los frames con su propio
+ * timer y mueve la trenza/falda con una física de seguimiento sencilla.
+ * No toca posición, velocidad ni colisiones: si borrás esta función, el juego
+ * se sigue jugando igual (sólo se ve tieso).
+ */
+function actualizarVisualHelena(dt) {
+  // ---------- 1) ¿Qué animación corresponde? ----------
+  let nuevoEstado;
+  if (!helena.enSuelo)                    nuevoEstado = (helena.vy < 0) ? "salto" : "caida";
+  else if (Math.abs(helena.vx) > 15)      nuevoEstado = "correr";
+  else                                    nuevoEstado = "idle";
+
+  // Al cambiar de animación reiniciamos el ciclo desde el frame 0
+  if (nuevoEstado !== helena.animEstado) {
+    helena.animEstado = nuevoEstado;
+    helena.animFrame = 0;
+    helena.animReloj = 0;
+  }
+
+  // ---------- 2) Avance por frames discretos ----------
+  const def = ANIM[helena.animEstado];
+  // La carrera acelera su ciclo según lo rápido que vaya (se siente mucho mejor)
+  let duracion = def.dur;
+  if (helena.animEstado === "correr") {
+    const ritmo = Math.max(0.35, Math.abs(helena.vx) / FIS.velMax);
+    duracion = def.dur / ritmo;
+  }
+  // Red de seguridad: una duración de 0 colgaría el while de abajo
+  if (duracion < 0.02) duracion = 0.02;
+  helena.animReloj += dt;
+  while (helena.animReloj >= duracion) {
+    helena.animReloj -= duracion;
+    helena.animFrame = (helena.animFrame + 1) % def.frames;
+  }
+
+  // ---------- 3) Trenza: 2 segmentos que siguen con retardo ----------
+  // Si sube (vy<0) la trenza se queda abajo; si cae, flota hacia arriba.
+  const objetivoY = Math.max(-2.5, Math.min(3, -helena.vy * 0.005));
+  helena.trenzaOffset += (objetivoY - helena.trenzaOffset) * Math.min(1, dt * 12);
+  helena.trenza2     += (helena.trenzaOffset - helena.trenza2) * Math.min(1, dt * 7);
+
+  // ---------- 4) Vaivén horizontal de trenza y falda ----------
+  // Se calcula en el espacio LOCAL del sprite (mirando a la derecha): al correr,
+  // la trenza queda hacia atrás. El volteo horizontal lo resuelve el dibujo.
+  const objetivoSway = Math.max(-2, Math.min(2, -helena.vx * 0.007));
+  helena.trenzaSway += (objetivoSway - helena.trenzaSway) * Math.min(1, dt * 9);
+  helena.faldaSway  += (objetivoSway * 0.5 - helena.faldaSway) * Math.min(1, dt * 12);
+}
+
+/** Enemigos: el bug patrulla; la llama sólo "titila" (animación en draw) */
+function actualizarEnemigos(dt) {
+  for (let i = 0; i < enemigos.length; i++) {
+    const e = enemigos[i];
+    e.fase += dt;
+    if (e.tipo !== "bug") continue;
+
+    e.x += e.vel * e.dir * dt;
+    if (e.x <= e.minX) { e.x = e.minX; e.dir = 1; }
+    if (e.x >= e.maxX) { e.x = e.maxX; e.dir = -1; }
+  }
+}
+
+/** Recolección de estrellas/notas + lógica de combo */
+function actualizarColeccionables(dt) {
+  // La ventana de combo se agota con el tiempo
+  if (comboReloj > 0) {
+    comboReloj -= dt;
+    if (comboReloj <= 0) { comboReloj = 0; comboContador = 0; }
+  }
+
+  for (let i = 0; i < coleccionables.length; i++) {
+    const c = coleccionables[i];
+    if (!c.activo) continue;
+    if (!solapan(helena, c)) continue;
+
+    c.activo = false;
+
+    // --- Combo: si llegó dentro de la ventana, encadena ---
+    comboContador = (comboReloj > 0) ? comboContador + 1 : 1;
+    comboReloj = JUEGO.comboVentana;
+
+    const base = (c.tipo === "nota") ? JUEGO.puntosNota : JUEGO.puntosEstrella;
+    const multip = (comboContador >= JUEGO.comboMinimo) ? JUEGO.comboMultip : 1;
+    puntaje += base * multip;
+
+    // El último parámetro marca el instante EXACTO en que se dispara el x2,
+    // para que el cartel "COMBO!" aparezca una sola vez.
+    efectoRecoger(c.x + c.w / 2, c.y + c.h / 2, c.tipo,
+                  base * multip, comboContador === JUEGO.comboMinimo);
+  }
+
+  // Si recogió TODO, el set reaparece: el nivel se puede seguir jugando.
+  let quedaAlguno = false;
+  for (let i = 0; i < coleccionables.length; i++) {
+    if (coleccionables[i].activo) { quedaAlguno = true; break; }
+  }
+  if (!quedaAlguno) {
+    for (let i = 0; i < coleccionables.length; i++) coleccionables[i].activo = true;
+  }
+}
+
+/** Quita una vida, aplica knockback + invulnerabilidad, o termina la partida */
+function recibirDanio(dirEmpuje) {
+  if (helena.invulnerable > 0) return;
+
+  vidas--;
+  helena.invulnerable = JUEGO.invulnerable;
+  comboContador = 0;
+  comboReloj = 0;
+
+  efectoDanio(helena.x + helena.w / 2, helena.y + helena.h / 2);
+
+  if (vidas <= 0) {
+    if (puntaje > highScore) highScore = puntaje; // high score de sesión, en RAM
+    estado = ESTADO.GAMEOVER;
+    sonidoGameOver();
+
+    // Congelamos el puntaje para el envío (el vivo se resetea al reiniciar) y,
+    // SÓLO si la API respondió al arrancar, abrimos la entrada de iniciales.
+    puntajeFinal = puntaje;
+    envioRank = 0;
+    inicialSel = 0;
+    envioEstado = apiDisponible ? ENVIO.EDITANDO : ENVIO.INACTIVO;
+    envioMensaje = apiDisponible ? MSG_EDITANDO : "";
+    return;
+  }
+
+  if (helena.y > ALTO_NIVEL) {
+    // Se cayó al vacío: reaparece en el punto de inicio
+    helena.x = SPAWN.x; helena.y = SPAWN.y;
+    helena.vx = 0; helena.vy = 0;
+  } else {
+    // Knockback pequeño en sentido contrario al enemigo
+    helena.vx = JUEGO.knockbackX * (dirEmpuje >= 0 ? 1 : -1);
+    helena.vy = -JUEGO.knockbackY;
+    helena.enSuelo = false;
+  }
+}
+
+/** Choques Helena ↔ enemigos */
+function actualizarColisionesEnemigos() {
+  if (helena.invulnerable > 0) return;
+  for (let i = 0; i < enemigos.length; i++) {
+    const e = enemigos[i];
+    if (!solapan(helena, e)) continue;
+    // El empuje va desde el enemigo hacia Helena
+    const dir = (helena.x + helena.w / 2) < (e.x + e.w / 2) ? -1 : 1;
+    recibirDanio(dir);
+    return;
+  }
+}
+
+/** Avanza las partículas vivas del pool (las muertas se saltean) */
+function actualizarParticulas(dt) {
+  for (let i = 0; i < particulas.length; i++) {
+    const p = particulas[i];
+    if (!p.viva) continue;
+
+    p.vida -= dt;
+    if (p.vida <= 0) { p.viva = false; continue; }  // vuelve al pool
+
+    p.vy += p.gravedad * dt;                        // gravedad propia
+    p.vx -= p.vx * Math.min(1, p.roce * dt);        // rozamiento horizontal
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+  }
+}
+
+/** Los textos flotantes suben despacio y se apagan solos */
+function actualizarTextos(dt) {
+  for (let i = 0; i < textos.length; i++) {
+    const t = textos[i];
+    if (!t.viva) continue;
+
+    t.vida -= dt;
+    if (t.vida <= 0) { t.viva = false; continue; }
+    t.y -= JUICE.textoVel * dt;
+  }
+}
+
+/**
+ * Screen shake: la amplitud decae con el tiempo restante, así el temblor se
+ * apaga suave en vez de cortarse de golpe. El HUD no tiembla porque se dibuja
+ * fuera del translate() de la cámara.
+ */
+function actualizarShake(dt) {
+  if (shakeReloj <= 0) {
+    camara.shakeX = 0;
+    camara.shakeY = 0;
+    return;
+  }
+  shakeReloj = Math.max(0, shakeReloj - dt);
+
+  const decaimiento = Math.min(1, shakeReloj / JUICE.shakeDuracion);
+  const fuerza = JUICE.shakeAmplitud * decaimiento;
+  // Dos senos rápidos y desfasados: sacude en diagonal, no en línea recta
+  camara.shakeX = Math.round(Math.cos(shakeReloj * 70) * fuerza);
+  camara.shakeY = Math.round(Math.sin(shakeReloj * 52) * fuerza * 0.7);
+}
+
+/** Cámara: sigue a Helena en X, suavizado, y no se sale del nivel */
+function actualizarCamara(dt) {
+  const objetivo = helena.x + helena.w / 2 - ANCHO_VISTA / 2;
+  const limiteMax = Math.max(0, ANCHO_NIVEL - ANCHO_VISTA);
+  const objetivoClamp = Math.max(0, Math.min(limiteMax, objetivo));
+  // Interpolación exponencial: suave e independiente del framerate
+  camara.x += (objetivoClamp - camara.x) * Math.min(1, dt * 8);
+}
+
+/** Reinicia toda la partida reutilizando los objetos ya creados */
+function reiniciarPartida() {
+  puntaje = 0;
+  vidas = JUEGO.vidasIniciales;
+  comboContador = 0;
+  comboReloj = 0;
+
+  helena.x = SPAWN.x; helena.y = SPAWN.y;
+  helena.vx = 0; helena.vy = 0;
+  helena.enSuelo = false;
+  helena.mirandoDerecha = true;
+  helena.coyote = 0; helena.buffer = 0;
+  helena.invulnerable = 0;
+  // Estado visual
+  helena.animEstado = "idle";
+  helena.animFrame = 0;
+  helena.animReloj = 0;
+  helena.trenzaOffset = 0;
+  helena.trenza2 = 0;
+  helena.trenzaSway = 0;
+  helena.faldaSway = 0;
+
+  for (let i = 0; i < coleccionables.length; i++) coleccionables[i].activo = true;
+
+  for (let i = 0; i < enemigos.length; i++) {
+    const e = enemigos[i];
+    e.x = e.inicioX;
+    e.y = e.inicioY;
+    e.dir = 1;
+  }
+
+  // Cerramos la entrada de iniciales. El token que sube invalida cualquier
+  // respuesta de la API que todavía esté en vuelo de la partida anterior.
+  envioEstado = ENVIO.INACTIVO;
+  envioToken++;
+
+  // Apagamos el juice pendiente de la partida anterior (sin recrear los pools)
+  for (let i = 0; i < particulas.length; i++) particulas[i].viva = false;
+  for (let i = 0; i < textos.length; i++) textos[i].viva = false;
+  shakeReloj = 0;
+  camara.shakeX = 0;
+  camara.shakeY = 0;
+
+  camara.x = 0;
+}
+
+/** UPDATE principal: reparte según el estado de pantalla */
+function update(dt) {
+  tiempoTotal += dt;
+
+  // El juice se actualiza SIEMPRE, en cualquier pantalla: así las chispas y el
+  // temblor del golpe final terminan de apagarse sobre el "GAME OVER".
+  actualizarParticulas(dt);
+  actualizarTextos(dt);
+  actualizarShake(dt);
+
+  if (estado === ESTADO.INICIO) {
+    if (saltoRecienPresionado) { reiniciarPartida(); estado = ESTADO.JUGANDO; }
+    return;
+  }
+
+  if (estado === ESTADO.GAMEOVER) {
+    if (saltoRecienPresionado) { reiniciarPartida(); estado = ESTADO.JUGANDO; }
+    return;
+  }
+
+  // --- JUGANDO ---
+  actualizarHelena(dt);
+  actualizarEnemigos(dt);
+  actualizarColeccionables(dt);
+  actualizarColisionesEnemigos();
+  actualizarCamara(dt);
+
+  // El puntaje vivo también actualiza el high score mostrado en el HUD
+  if (puntaje > highScore) highScore = puntaje;
+}
+
+
+/* ==========================================================================
+   6) DRAW — dibujo puro. Ninguna función de acá modifica el estado del juego.
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   FONDO — parallax de 3 capas.
+   Cada capa se dibuja dos veces (una copia a la izquierda y otra a la derecha)
+   para que el patrón de 960px se repita sin dejar huecos al hacer scroll.
+   -------------------------------------------------------------------------- */
+
+// El degradado del cielo también se crea una sola vez (no en cada frame)
+const GRAD_CIELO = ctx.createLinearGradient(0, 0, 0, ALTO_VISTA);
+GRAD_CIELO.addColorStop(0, COLOR.cieloArriba);
+GRAD_CIELO.addColorStop(1, COLOR.cieloAbajo);
+
+/**
+ * Devuelve el desplazamiento de una capa, siempre dentro de [-patron, 0].
+ * Sumándole 0 y +patron obtenemos las dos copias que cubren la pantalla.
+ */
+function offsetCapa(factor) {
+  let o = -(camara.x * factor) % PARALLAX.patron;
+  if (o > 0) o -= PARALLAX.patron;
+  return o;
+}
+
+/** Capa 1 (lenta): cielo nocturno, luna y estrellas que titilan */
+function dibujarCapaCielo() {
+  ctx.fillStyle = GRAD_CIELO;
+  ctx.fillRect(0, 0, ANCHO_VISTA, ALTO_VISTA);
+
+  const base = offsetCapa(PARALLAX.cielo);
+
+  for (let copia = 0; copia < 2; copia++) {
+    const ox = base + copia * PARALLAX.patron;
+
+    // --- Luna con halo ---
+    const lx = ox + 760, ly = 96;
+    if (lx > -80 && lx < ANCHO_VISTA + 80) {
+      ctx.save();
+      ctx.translate(lx, ly);
+      ctx.fillStyle = GRAD_LUNA;
+      ctx.fillRect(-60, -60, 120, 120);
+      ctx.fillStyle = COLOR.luna;
+      ctx.beginPath();
+      ctx.arc(0, 0, 22, 0, Math.PI * 2);
+      ctx.fill();
+      // Mordisco: un círculo del color del cielo convierte el disco en creciente
+      ctx.fillStyle = COLOR.cieloArriba;
+      ctx.beginPath();
+      ctx.arc(10, -6, 19, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // --- Estrellas ---
+    ctx.fillStyle = COLOR.estrellaCielo;
+    for (let i = 0; i < CAPA_ESTRELLAS.length; i++) {
+      const e = CAPA_ESTRELLAS[i];
+      const x = ox + e.x;
+      if (x < -2 || x > ANCHO_VISTA + 2) continue;
+      // Titileo sin cambiar de color (evita crear strings en cada frame)
+      const t = Math.sin(tiempoTotal * 2 + e.fase);
+      if (t < -0.55) continue;               // apagada por un instante
+      const r = e.r * (t > 0.75 ? 1.4 : 1);  // pequeño destello
+      ctx.fillRect(x, e.y, r, r);
+    }
+  }
+}
+
+/** Capa 2 (media): siluetas de ciudad/escenario con ventanas encendidas */
+function dibujarCapaCiudad() {
+  const base = offsetCapa(PARALLAX.ciudad);
+  const suelo = 500;   // los edificios se apoyan detrás del suelo del nivel
+
+  for (let copia = 0; copia < 2; copia++) {
+    const ox = base + copia * PARALLAX.patron;
+
+    for (let i = 0; i < CAPA_CIUDAD.length; i++) {
+      const b = CAPA_CIUDAD[i];
+      const bx = Math.round(ox + b.x);
+      if (bx > ANCHO_VISTA || bx + b.w < 0) continue;   // culling simple
+      const by = suelo - b.h;
+
+      // Silueta
+      ctx.fillStyle = COLOR.ciudad;
+      ctx.fillRect(bx, by, b.w, b.h);
+      // Filo superior apenas iluminado por el neón de la ciudad
+      ctx.fillStyle = COLOR.ciudadBorde;
+      ctx.fillRect(bx, by, b.w, 2);
+
+      // Ventanas (se apagan y encienden con un seno, sin random en draw)
+      for (let v = 0; v < b.ventanas.length; v++) {
+        const vt = b.ventanas[v];
+        if (Math.sin(tiempoTotal * 0.9 + vt.fase) < -0.45) continue;
+        ctx.fillStyle = vt.rosa ? COLOR.ventanaRosa : COLOR.ventanaCyan;
+        ctx.fillRect(bx + vt.x, by + vt.y, 4, 6);
+      }
+
+      // Antena con luz roja de aviso
+      if (b.antena) {
+        ctx.fillStyle = COLOR.ciudadBorde;
+        ctx.fillRect(bx + (b.w >> 1), by - 14, 2, 14);
+        if (Math.sin(tiempoTotal * 3) > 0) {
+          ctx.fillStyle = COLOR.antena;
+          ctx.fillRect(bx + (b.w >> 1) - 1, by - 17, 4, 4);
+        }
+      }
+    }
+  }
+}
+
+/** Capa 3 (rápida): reflectores que barren + guirnalda de bombillas */
+function dibujarCapaLuces() {
+  const base = offsetCapa(PARALLAX.luces);
+
+  for (let copia = 0; copia < 2; copia++) {
+    const ox = base + copia * PARALLAX.patron;
+
+    // --- Haces de luz ---
+    for (let i = 0; i < CAPA_REFLECTORES.length; i++) {
+      const r = CAPA_REFLECTORES[i];
+      const x = ox + r.x;
+      if (x < -260 || x > ANCHO_VISTA + 260) continue;
+
+      const angulo = Math.sin(tiempoTotal * r.vel + r.fase) * 0.22;
+      ctx.save();
+      ctx.translate(x, -10);
+      ctx.rotate(angulo);
+      ctx.fillStyle = GRAD_REFLECTOR[r.color];
+      ctx.beginPath();
+      ctx.moveTo(-7, 0);
+      ctx.lineTo(7, 0);
+      ctx.lineTo(r.ancho, LARGO_HAZ);
+      ctx.lineTo(-r.ancho, LARGO_HAZ);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // --- Guirnalda de bombillas colgada arriba ---
+    ctx.fillStyle = "rgba(58, 33, 104, .85)";
+    ctx.fillRect(Math.round(ox), 24, PARALLAX.patron, 2);
+    for (let i = 0; i < CAPA_BOMBILLAS.length; i++) {
+      const b = CAPA_BOMBILLAS[i];
+      const x = ox + b.x;
+      if (x < -6 || x > ANCHO_VISTA + 6) continue;
+      const pulso = Math.sin(tiempoTotal * 2.2 + b.fase);
+      ctx.fillStyle = pulso > 0 ? COLOR.bombilla : COLOR.neonRosa;
+      ctx.fillRect(Math.round(x), 26, 3, 5);
+    }
+  }
+}
+
+/** Fondo completo: las 3 capas, de la más lejana a la más cercana */
+function dibujarFondo() {
+  dibujarCapaCielo();
+  dibujarCapaCiudad();
+  dibujarCapaLuces();
+}
+
+function dibujarPlataformas() {
+  for (let i = 0; i < plataformas.length; i++) {
+    const p = plataformas[i];
+    const esSuelo = p.tipo === "suelo";
+    ctx.fillStyle = esSuelo ? COLOR.suelo : COLOR.plataforma;
+    ctx.fillRect(p.x, p.y, p.w, p.h);
+    // Borde superior neón: marca claramente dónde se pisa
+    ctx.fillStyle = esSuelo ? COLOR.sueloBorde : COLOR.platBorde;
+    ctx.fillRect(p.x, p.y, p.w, 3);
+  }
+}
+
+/** Estrella de 5 puntas dibujada con shapes (nada de emoji de texto) */
+function dibujarEstrella(cx, cy, radio, color) {
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  for (let i = 0; i < 10; i++) {
+    const r = (i % 2 === 0) ? radio : radio * 0.45;
+    const ang = -Math.PI / 2 + i * Math.PI / 5;
+    const px = cx + Math.cos(ang) * r;
+    const py = cy + Math.sin(ang) * r;
+    if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.fill();
+}
+
+/** Nota musical: cabeza ovalada + plica + banderita */
+function dibujarNota(cx, cy, escala, color) {
+  ctx.fillStyle = color;
+  // Cabeza
+  ctx.beginPath();
+  ctx.ellipse(cx - 3 * escala, cy + 5 * escala, 5 * escala, 4 * escala, -0.35, 0, Math.PI * 2);
+  ctx.fill();
+  // Plica
+  ctx.fillRect(cx + 1 * escala, cy - 9 * escala, 2 * escala, 14 * escala);
+  // Banderita
+  ctx.beginPath();
+  ctx.moveTo(cx + 3 * escala, cy - 9 * escala);
+  ctx.quadraticCurveTo(cx + 9 * escala, cy - 6 * escala, cx + 3 * escala, cy - 1 * escala);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function dibujarColeccionables() {
+  for (let i = 0; i < coleccionables.length; i++) {
+    const c = coleccionables[i];
+    if (!c.activo) continue;
+    // Flotan suavemente con un seno (sólo visual, la hitbox no se mueve)
+    const flote = Math.sin(tiempoTotal * 2.5 + c.fase) * 3;
+    const cx = c.x + c.w / 2;
+    const cy = c.y + c.h / 2 + flote;
+
+    if (c.tipo === "estrella") {
+      dibujarEstrella(cx, cy, c.w / 2, COLOR.estrella);
+    } else {
+      dibujarNota(cx, cy, c.w / 18, COLOR.nota);
+    }
+  }
+}
+
+/** Bug: cuerpo redondeado con patas y antenas (temática DevOps) */
+function dibujarBug(e) {
+  const cx = e.x + e.w / 2;
+  const cy = e.y + e.h / 2;
+  const paso = Math.sin(e.fase * 10) * 2; // patitas moviéndose
+
+  ctx.fillStyle = COLOR.bugOscuro;
+  // Patas
+  for (let i = -1; i <= 1; i++) {
+    ctx.fillRect(cx + i * 8 - 1, e.y + e.h - 4, 2, 5 + (i === 0 ? paso : -paso));
+  }
+  // Antenas
+  ctx.fillRect(cx - 7, e.y - 4, 2, 5);
+  ctx.fillRect(cx + 5, e.y - 4, 2, 5);
+
+  // Cuerpo
+  ctx.fillStyle = COLOR.bug;
+  ctx.beginPath();
+  ctx.ellipse(cx, cy, e.w / 2, e.h / 2, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Franja central
+  ctx.fillStyle = COLOR.bugOscuro;
+  ctx.fillRect(cx - 1, e.y + 2, 2, e.h - 4);
+  // Ojos (miran hacia donde camina)
+  ctx.fillStyle = "#12220c";
+  ctx.fillRect(cx + e.dir * 5 - 1, cy - 4, 3, 3);
+  ctx.fillRect(cx + e.dir * 9 - 1, cy - 4, 3, 3);
+}
+
+/** Llama "CrashLoop": fuego estático que ondula */
+function dibujarLlama(e) {
+  const cx = e.x + e.w / 2;
+  const base = e.y + e.h;
+  const onda = Math.sin(e.fase * 8) * 3;
+
+  // Llama externa
+  ctx.fillStyle = COLOR.llama;
+  ctx.beginPath();
+  ctx.moveTo(cx - e.w / 2, base);
+  ctx.quadraticCurveTo(cx - e.w / 2, e.y + 6, cx + onda, e.y);
+  ctx.quadraticCurveTo(cx + e.w / 2, e.y + 6, cx + e.w / 2, base);
+  ctx.closePath();
+  ctx.fill();
+
+  // Llama interna
+  ctx.fillStyle = COLOR.llamaInt;
+  ctx.beginPath();
+  ctx.moveTo(cx - e.w / 4, base);
+  ctx.quadraticCurveTo(cx - e.w / 4, e.y + e.h * 0.5, cx + onda * 0.5, e.y + e.h * 0.35);
+  ctx.quadraticCurveTo(cx + e.w / 4, e.y + e.h * 0.5, cx + e.w / 4, base);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function dibujarEnemigos() {
+  for (let i = 0; i < enemigos.length; i++) {
+    const e = enemigos[i];
+    if (e.tipo === "bug") dibujarBug(e);
+    else dibujarLlama(e);
+  }
+}
+
+/* ==========================================================================
+   HELENA — pixel art programático, animado por frames.
+   --------------------------------------------------------------------------
+   Cómo funciona:
+   - Todo el sprite se pinta en "píxeles de arte" sobre una grilla de 16x22,
+     SIEMPRE mirando a la derecha, con el helper ap().
+   - dibujarHelena() se encarga de posicionar, escalar y espejar; el cuerpo
+     (dibujarSpriteHelena) sólo pinta rectangulitos: es fácil de retocar.
+   - Filas de referencia:  0-7 cabeza | 8-12 torso | 13-16 falda | 16-21 piernas
+   ========================================================================== */
+
+/** Pinta un rectángulo en píxeles de arte (el contexto ya viene escalado) */
+function ap(x, y, w, h, color) {
+  ctx.fillStyle = color;
+  ctx.fillRect(x * SPRITE.escala, y * SPRITE.escala,
+               w * SPRITE.escala, h * SPRITE.escala);
+}
+
+/** Dibuja el cuerpo de Helena según el frame de animación actual */
+function dibujarSpriteHelena() {
+  const f = helena.animFrame;
+  const est = helena.animEstado;
+
+  // ---------- Offsets del frame actual (en píxeles de arte) ----------
+  let bob = 0;        // sube/baja cabeza+torso+falda (los pies NO se mueven)
+  let pieA = 0, pieB = 0;      // desplazamiento horizontal de cada pierna
+  let altoA = 0, altoB = 0;    // cuánto se levanta cada pie del piso
+  let brazo = 0;               // altura del brazo que sostiene el micrófono
+
+  if (est === "idle") {
+    bob = IDLE_BOB[f];
+    brazo = (f === 1) ? 1 : 0;               // respira y el micro baja un pelo
+  } else if (est === "correr") {
+    bob   = CORRER_BOB[f];
+    pieA  = CORRER_PIE_A[f];   pieB  = CORRER_PIE_B[f];
+    altoA = CORRER_ALTO_A[f];  altoB = CORRER_ALTO_B[f];
+    brazo = (f === 1 || f === 3) ? -1 : 0;   // el brazo acompaña la zancada
+  } else if (est === "salto") {
+    bob = -1; pieA = 1; pieB = -2; altoA = -2; altoB = -1; brazo = -2;
+  } else { // "caida"
+    bob = 0;  pieA = -2; pieB = 2; altoA = -1; altoB = 0;  brazo = 1;
+  }
+
+  // ---------- Física de seguimiento (trenza y falda) ----------
+  const tSway1 = Math.round(helena.trenzaSway);
+  const tSway2 = Math.round(helena.trenzaSway * 1.6);
+  const tY1    = Math.round(helena.trenzaOffset);
+  const tY2    = Math.round(helena.trenza2 * 1.5);
+  const fSway  = Math.round(helena.faldaSway);
+
+  // ======================= 1) TRENZA (detrás de todo) =======================
+  // Dos segmentos ENCADENADOS: el 2º arranca donde termina el 1º, así la trenza
+  // nunca se "despega" de la cabeza. La inercia estira o encoge cada segmento.
+  const t1y = 6 + bob;                                  // nace pegada a la cinta
+  const t1h = Math.max(5, Math.min(10, 8 + tY1));       // largo del segmento 1
+  ap(1 + tSway1, t1y,          3, t1h, COLOR.trenza);
+  ap(1 + tSway1, t1y,          1, t1h, SOMBRA.trenza);  // canto sombreado
+  ap(1 + tSway1, t1y + 2,      3, 1,   SOMBRA.trenza);  // marcas del trenzado
+  ap(1 + tSway1, t1y + t1h - 2, 3, 1,  SOMBRA.trenza);
+
+  const t2y = t1y + t1h;                                // sigue al primero
+  const t2h = Math.max(4, Math.min(8, 6 + tY2));
+  ap(1 + tSway2, t2y,          3, t2h, COLOR.trenza);
+  ap(1 + tSway2, t2y,          1, t2h, SOMBRA.trenza);
+  ap(1 + tSway2, t2y + 2,      3, 1,   SOMBRA.trenza);
+  ap(1 + tSway2, t2y + t2h,    3, 1,   COLOR.neonRosa); // lazo neón del final
+  ap(2 + tSway2, t2y + t2h + 1, 2, 1,  SOMBRA.trenza);  // puntita
+
+  // ======================= 2) PIERNAS Y BOTAS =======================
+  // Van ancladas al piso (fila 21 = borde inferior del sprite).
+  const piernaA = 16 + altoA;   // pierna trasera
+  ap(5 + pieA, piernaA,     2, 4, SOMBRA.piel);
+  ap(4 + pieA, piernaA + 4, 3, 2, SOMBRA.botas);
+  const piernaB = 16 + altoB;   // pierna delantera
+  ap(9 + pieB, piernaB,     2, 4, COLOR.piel);
+  ap(9 + pieB, piernaB + 4, 3, 2, COLOR.botas);
+  ap(9 + pieB, piernaB + 4, 3, 1, COLOR.neonCyan); // caña brillante de la bota
+
+  // ======================= 3) FALDA (tapa el nacimiento de las piernas) =====
+  const fy = 13 + bob;
+  ap(4,         fy,     8,  1, COLOR.falda);
+  ap(3,         fy + 1, 10, 1, COLOR.falda);
+  ap(3 + fSway, fy + 2, 10, 1, COLOR.falda);
+  ap(2 + fSway, fy + 3, 12, 1, SOMBRA.falda);
+  ap(2 + fSway, fy + 3, 2,  1, COLOR.neonCyan);    // puntas de neón del ruedo
+  ap(12 + fSway, fy + 3, 2, 1, COLOR.neonCyan);
+
+  // ======================= 4) TORSO / TOP DE ESCENARIO ======================
+  const ty = 8 + bob;
+  ap(4,  ty,     8, 5, COLOR.top);
+  ap(4,  ty + 2, 8, 1, COLOR.neonCyan);            // franja luminosa
+  ap(4,  ty + 4, 8, 1, SOMBRA.top);                // sombra bajo el top
+  ap(3,  ty,     1, 2, SOMBRA.top);                // manguita trasera
+  ap(12, ty,     1, 2, COLOR.top);                 // manguita delantera
+
+  // ======================= 5) BRAZOS ======================
+  ap(3, ty + 2, 1, 4, SOMBRA.piel);                // brazo de atrás
+  ap(12, ty + 2 + brazo, 1, 4, COLOR.piel);        // brazo del micrófono
+
+  // ======================= 6) CABEZA ======================
+  const hy = bob;
+  ap(4,  hy,     8,  1, COLOR.trenza);             // copete
+  ap(3,  hy + 1, 10, 2, COLOR.trenza);
+  ap(4,  hy + 3, 8,  4, COLOR.piel);               // cara
+  ap(4,  hy + 3, 8,  1, COLOR.trenza);             // flequillo
+  ap(3,  hy + 3, 1,  4, SOMBRA.trenza);            // mechón trasero
+  ap(12, hy + 3, 1,  3, COLOR.trenza);             // mechón delantero
+  ap(6,  hy + 4, 1,  2, COLOR.ojo);                // ojos
+  ap(9,  hy + 4, 1,  2, COLOR.ojo);
+  ap(4,  hy + 5, 1,  1, COLOR.rubor);              // rubor
+  ap(11, hy + 5, 1,  1, COLOR.rubor);
+  ap(8,  hy + 6, 1,  1, COLOR.labios);             // boca
+  ap(11, hy + 1, 2,  2, COLOR.lazo);               // estrella-broche del pelo
+  ap(7,  hy + 7, 2,  1, SOMBRA.piel);              // cuello
+  ap(1,  hy + 6, 3,  1, COLOR.lazo);               // cinta que ata la trenza
+
+  // ======================= 7) MICRÓFONO-ESPADA (sólo visual, sin mecánica) ==
+  // Se sostiene al costado, con la cápsula arriba: mitad micrófono, mitad espada.
+  const my = ty + brazo;
+  ap(13, my - 2, 3, 1, COLOR.micro);               // tope redondeado
+  ap(13, my - 1, 3, 2, COLOR.micro);               // cápsula del micrófono
+  ap(13, my + 1, 3, 1, COLOR.neonCyan);            // anillo luminoso
+  ap(13, my + 2, 2, 5, COLOR.microMango);          // mango largo (la "hoja")
+  ap(12, my + 4, 4, 1, COLOR.lazo);                // guarda dorada
+  ap(12, my + 5, 2, 2, COLOR.piel);                // la mano que lo empuña
+}
+
+/* --------------------------------------------------------------------------
+   dibujarHelena(): posiciona, escala y voltea el sprite. AISLADA A PROPÓSITO:
+   ninguna otra parte del juego sabe cómo se ve Helena.
+   -------------------------------------------------------------------------- */
+function dibujarHelena() {
+  // Parpadeo mientras es invulnerable: se salta el dibujo en ciclos cortos
+  if (helena.invulnerable > 0) {
+    const ciclo = Math.floor(helena.invulnerable / JUEGO.parpadeo);
+    if (ciclo % 2 === 0) return;
+  }
+
+  const E = SPRITE.escala;
+  // El sprite (32x44) se centra sobre la caja de colisión (26x40) y apoya
+  // los pies en su borde inferior: así lo que se ve coincide con lo que choca.
+  const origenX = Math.round(helena.x + helena.w / 2 - (SPRITE.ancho * E) / 2);
+  const origenY = Math.round(helena.y + helena.h - SPRITE.alto * E);
+
+  ctx.save();
+  ctx.translate(origenX, origenY);
+  // Volteo horizontal: dibujamos siempre mirando a la derecha y espejamos
+  if (!helena.mirandoDerecha) {
+    ctx.translate(SPRITE.ancho * E, 0);
+    ctx.scale(-1, 1);
+  }
+  dibujarSpriteHelena();
+  ctx.restore();
+}
+
+/* --------------------------------------------------------------------------
+   JUICE — partículas y textos flotantes.
+   Se dibujan DENTRO del transform de la cámara (viven en el mundo), encima de
+   plataformas, enemigos y Helena.
+   -------------------------------------------------------------------------- */
+
+/** Partículas: se desvanecen y se achican a medida que se les acaba la vida */
+function dibujarParticulas() {
+  for (let i = 0; i < particulas.length; i++) {
+    const p = particulas[i];
+    if (!p.viva) continue;
+
+    const k = p.vida / p.vidaMax;              // 1 al nacer → 0 al morir
+    ctx.globalAlpha = Math.min(1, k * 1.8);    // fade-out sobre el final
+    const tam = Math.max(1, p.tam * k);        // y va encogiendo
+
+    if (p.forma === 1) {
+      dibujarEstrella(p.x, p.y, tam, p.color); // estrellitas del coleccionable
+    } else {
+      ctx.fillStyle = p.color;                 // chispas y polvillo: cuadraditos
+      ctx.fillRect(p.x - tam / 2, p.y - tam / 2, tam, tam);
+    }
+  }
+  ctx.globalAlpha = 1;                         // dejamos el contexto limpio
+}
+
+/** Textos flotantes: contorno oscuro para que se lean sobre el fondo neón */
+function dibujarTextosFlotantes() {
+  ctx.textAlign = "center";
+  ctx.lineWidth = 4;
+  ctx.lineJoin = "round";
+  ctx.strokeStyle = "rgba(11, 7, 22, .9)";
+
+  for (let i = 0; i < textos.length; i++) {
+    const t = textos[i];
+    if (!t.viva) continue;
+
+    const k = t.vida / t.vidaMax;
+    ctx.globalAlpha = Math.min(1, k * 2.2);    // se apaga en el último tramo
+    ctx.font = t.fuente;                       // fuente precalculada (sin basura)
+    ctx.strokeText(t.texto, t.x, t.y);
+    ctx.fillStyle = t.color;
+    ctx.fillText(t.texto, t.x, t.y);
+  }
+
+  ctx.globalAlpha = 1;
+  ctx.textAlign = "left";
+}
+
+/** Corazón del HUD, con shapes */
+function dibujarCorazon(x, y, tam, lleno) {
+  ctx.fillStyle = lleno ? COLOR.corazon : COLOR.corazonVacio;
+  ctx.beginPath();
+  const t = tam / 2;
+  ctx.moveTo(x + t, y + tam * 0.95);
+  ctx.bezierCurveTo(x - tam * 0.15, y + tam * 0.55, x + tam * 0.1, y - tam * 0.12, x + t, y + tam * 0.28);
+  ctx.bezierCurveTo(x + tam * 0.9, y - tam * 0.12, x + tam * 1.15, y + tam * 0.55, x + t, y + tam * 0.95);
+  ctx.closePath();
+  ctx.fill();
+}
+
+/** Texto con brillo neón (uso puntual: HUD y pantallas) */
+function textoNeon(txt, x, y, tam, color, brillo, alineacion) {
+  ctx.save();
+  ctx.font = "bold " + tam + "px 'Trebuchet MS', system-ui, sans-serif";
+  ctx.textAlign = alineacion || "left";
+  ctx.textBaseline = "alphabetic";
+  ctx.shadowColor = brillo || color;
+  ctx.shadowBlur = tam * 0.5;
+  ctx.fillStyle = color;
+  ctx.fillText(txt, x, y);
+  ctx.restore();
+}
+
+/** HUD: vidas, puntaje, high score y aviso de combo */
+function dibujarHUD() {
+  // Corazones
+  for (let i = 0; i < JUEGO.vidasIniciales; i++) {
+    dibujarCorazon(16 + i * 26, 14, 20, i < vidas);
+  }
+  // Puntaje y high score
+  textoNeon("PUNTOS " + puntaje, ANCHO_VISTA - 16, 30, 20, COLOR.hudTexto, COLOR.neonCyan, "right");
+  textoNeon("BEST " + highScore, ANCHO_VISTA - 16, 52, 14, "rgba(234,246,255,.7)", COLOR.neonRosa, "right");
+
+  // Aviso de combo activo
+  if (comboContador >= JUEGO.comboMinimo && comboReloj > 0) {
+    textoNeon("COMBO x" + JUEGO.comboMultip, ANCHO_VISTA / 2, 44, 24, COLOR.neonRosa, COLOR.neonRosa, "center");
+  }
+}
+
+/** Pantalla de inicio con título neón K-pop */
+function dibujarPantallaInicio() {
+  ctx.fillStyle = "rgba(11, 7, 22, .72)";
+  ctx.fillRect(0, 0, ANCHO_VISTA, ALTO_VISTA);
+
+  const pulso = 1 + Math.sin(tiempoTotal * 3) * 0.02;
+  ctx.save();
+  ctx.translate(ANCHO_VISTA / 2, ALTO_VISTA / 2 - 60);
+  ctx.scale(pulso, pulso);
+  textoNeon("PRINCESS", 0, 0, 68, "#ffffff", COLOR.neonRosa, "center");
+  textoNeon("HELENA", 0, 66, 68, COLOR.neonCyan, COLOR.neonCyan, "center");
+  ctx.restore();
+
+  // Parpadeo del llamado a la acción
+  if (Math.floor(tiempoTotal * 1.6) % 2 === 0) {
+    textoNeon("PRESIONA ESPACIO", ANCHO_VISTA / 2, ALTO_VISTA / 2 + 110, 24, "#ffffff", COLOR.neonRosa, "center");
+  }
+  textoNeon("← → mover   •   ESPACIO / ↑ saltar",
+            ANCHO_VISTA / 2, ALTO_VISTA - 40, 15, "rgba(234,246,255,.65)", COLOR.neonCyan, "center");
+
+  // Ranking global en un rincón, sólo si la API trajo datos
+  dibujarPanelTop(664, 296, 280, API_TOP_LIMIT);
+}
+
+/* --------------------------------------------------------------------------
+   LEADERBOARD — sólo se dibuja si la API contestó. Si no hay datos, estas dos
+   funciones no pintan nada y las pantallas quedan igual que en la v1.
+   -------------------------------------------------------------------------- */
+
+/** Panel neón con el top del ranking global */
+function dibujarPanelTop(x, y, ancho, cuantos) {
+  const filas = Math.min(cuantos, leaderboard.length);
+  if (filas === 0) return;                 // sin datos, no se dibuja la sección
+
+  const altoFila = 26;
+  const alto = 46 + filas * altoFila;
+
+  // Caja con borde neón
+  ctx.fillStyle = "rgba(20, 10, 43, .72)";
+  ctx.fillRect(x, y, ancho, alto);
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = "rgba(86, 232, 255, .45)";
+  ctx.strokeRect(x + 1, y + 1, ancho - 2, alto - 2);
+
+  textoNeon("TOP " + filas + " MUNDIAL", x + ancho / 2, y + 27, 17,
+            COLOR.neonCyan, COLOR.neonCyan, "center");
+
+  for (let i = 0; i < filas; i++) {
+    const e = leaderboard[i];
+    const fy = y + 50 + i * altoFila;
+    // Resaltamos en rosa la fila del jugador, si el servidor le dio ese puesto
+    const mia = (envioEstado === ENVIO.OK && e.rank === envioRank);
+    const color = mia ? COLOR.neonRosa : "rgba(234, 246, 255, .85)";
+    const brillo = mia ? COLOR.neonRosa : COLOR.neonCyan;
+    textoNeon(e.rank + ".",       x + 16,         fy, 16, color, brillo, "left");
+    textoNeon(e.player,           x + 54,         fy, 16, color, brillo, "left");
+    textoNeon(String(e.score),    x + ancho - 16, fy, 16, color, brillo, "right");
+  }
+}
+
+/** Las 3 casillas estilo arcade donde se cargan las iniciales */
+function dibujarEntradaIniciales(cx, y) {
+  const w = 42, h = 50, sep = 12;
+  const total = INICIALES_LARGO * w + (INICIALES_LARGO - 1) * sep;
+  let x = cx - total / 2;
+  const editando = (envioEstado === ENVIO.EDITANDO);
+
+  for (let i = 0; i < INICIALES_LARGO; i++) {
+    const activa = editando && (i === inicialSel);
+
+    ctx.fillStyle = "rgba(255, 255, 255, .05)";
+    ctx.fillRect(x, y, w, h);
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = activa ? COLOR.neonRosa : "rgba(86, 232, 255, .40)";
+    ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
+
+    textoNeon(iniciales[i], x + w / 2, y + h - 14, 30, "#ffffff",
+              activa ? COLOR.neonRosa : COLOR.neonCyan, "center");
+
+    // Guion parpadeante bajo la casilla que se está editando
+    if (activa && Math.floor(tiempoTotal * 2.5) % 2 === 0) {
+      ctx.fillStyle = COLOR.neonRosa;
+      ctx.fillRect(x + 7, y + h + 6, w - 14, 3);
+    }
+    x += w + sep;
+  }
+}
+
+/** Pantalla de game over */
+function dibujarPantallaGameOver() {
+  ctx.fillStyle = "rgba(11, 7, 22, .8)";
+  ctx.fillRect(0, 0, ANCHO_VISTA, ALTO_VISTA);
+
+  const conEntrada = (envioEstado !== ENVIO.INACTIVO);
+  const conTop     = (leaderboard.length > 0);
+
+  // ---- Camino SIN leaderboard: exactamente la pantalla de siempre ----
+  if (!conEntrada && !conTop) {
+    textoNeon("GAME OVER", ANCHO_VISTA / 2, ALTO_VISTA / 2 - 60, 56, "#ffffff", COLOR.neonRosa, "center");
+    textoNeon("PUNTAJE  " + puntaje, ANCHO_VISTA / 2, ALTO_VISTA / 2 + 4, 28, COLOR.neonCyan, COLOR.neonCyan, "center");
+    textoNeon("HIGH SCORE  " + highScore, ANCHO_VISTA / 2, ALTO_VISTA / 2 + 42, 20, "rgba(234,246,255,.8)", COLOR.neonRosa, "center");
+
+    if (Math.floor(tiempoTotal * 1.6) % 2 === 0) {
+      textoNeon("PRESIONA ESPACIO PARA REINICIAR",
+                ANCHO_VISTA / 2, ALTO_VISTA / 2 + 110, 20, "#ffffff", COLOR.neonRosa, "center");
+    }
+    return;
+  }
+
+  // ---- Camino CON leaderboard: resumen a la izquierda, ranking a la derecha ----
+  const cx = conTop ? 292 : ANCHO_VISTA / 2;
+
+  textoNeon("GAME OVER", cx, 152, 46, "#ffffff", COLOR.neonRosa, "center");
+  textoNeon("PUNTAJE  " + puntajeFinal, cx, 198, 24, COLOR.neonCyan, COLOR.neonCyan, "center");
+  textoNeon("HIGH SCORE  " + highScore, cx, 228, 16, "rgba(234,246,255,.8)", COLOR.neonRosa, "center");
+
+  if (conEntrada) {
+    textoNeon("TUS INICIALES", cx, 270, 14, "rgba(234,246,255,.6)", COLOR.neonCyan, "center");
+    dibujarEntradaIniciales(cx, 284);
+    // Estado del envío: ayuda, "ENVIANDO...", el puesto conseguido o el aviso
+    // discreto de que no hubo conexión. Nunca bloquea nada.
+    const colorMsg = (envioEstado === ENVIO.ERROR) ? "rgba(255,140,170,.85)"
+                                                   : "rgba(234,246,255,.7)";
+    textoNeon(envioMensaje, cx, 366, 14, colorMsg, COLOR.neonCyan, "center");
+  }
+
+  if (conTop) dibujarPanelTop(592, 124, 320, API_TOP_LIMIT);
+
+  if (Math.floor(tiempoTotal * 1.6) % 2 === 0) {
+    textoNeon("ESPACIO PARA REINICIAR",
+              ANCHO_VISTA / 2, ALTO_VISTA - 34, 18, "#ffffff", COLOR.neonRosa, "center");
+  }
+}
+
+/** DRAW principal */
+function draw() {
+  dibujarFondo();
+
+  // --- Mundo: todo lo que sigue se dibuja en coordenadas del nivel ---
+  ctx.save();
+  // Redondeamos la cámara para que el pixel art no "vibre" entre píxeles
+  ctx.translate(-Math.round(camara.x) + camara.shakeX, camara.shakeY);
+
+  dibujarPlataformas();
+  dibujarColeccionables();
+  dibujarEnemigos();
+  dibujarHelena();
+  dibujarParticulas();        // el juice va encima del mundo...
+  dibujarTextosFlotantes();   // ...y los textos encima de todo
+
+  ctx.restore();
+
+  // --- Capa de interfaz (coordenadas de pantalla) ---
+  if (estado === ESTADO.JUGANDO) dibujarHUD();
+  if (estado === ESTADO.INICIO)   dibujarPantallaInicio();
+  if (estado === ESTADO.GAMEOVER) { dibujarHUD(); dibujarPantallaGameOver(); }
+}
+
+
+/* ==========================================================================
+   7) LOOP + ARRANQUE
+   requestAnimationFrame con deltaTime en segundos y clamp de seguridad.
+   ========================================================================== */
+
+let ultimoTiempo = 0;
+
+function loop(ahora) {
+  // La primera llamada no tiene un "anterior" válido
+  if (!ultimoTiempo) ultimoTiempo = ahora;
+
+  let dt = (ahora - ultimoTiempo) / 1000;
+  ultimoTiempo = ahora;
+
+  // Clamp: si la pestaña estuvo en segundo plano, dt sería enorme y rompería la física
+  if (dt > JUEGO.dtMax) dt = JUEGO.dtMax;
+
+  update(dt);
+  draw();
+
+  // El flanco del salto se consume UNA sola vez por frame
+  saltoRecienPresionado = false;
+
+  requestAnimationFrame(loop);
+}
+
+// El loop arranca YA: el juego no espera absolutamente nada de la red.
+requestAnimationFrame(loop);
+
+// Sondeo único del leaderboard, en paralelo y sin bloquear. Si contesta, se
+// enciende la UI del ranking; si no, el juego sigue como si no existiera.
+// El .catch() final es un cinturón extra: sondearAPI() ya traga sus errores.
+sondearAPI().catch(() => { apiDisponible = false; });
+</script>
+</body>
+</html>

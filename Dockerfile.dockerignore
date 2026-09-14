@@ -1,0 +1,7 @@
+# Ignore específico de ./Dockerfile (BuildKit lo toma por el nombre).
+# Deny-by-default: sólo entra al contexto lo que se lista abajo. Al ser
+# por-Dockerfile, no afecta el build de api/.
+*
+!app/index.html
+!nginx/nginx.conf
+!nginx/default.conf

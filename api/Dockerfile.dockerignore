@@ -1,0 +1,9 @@
+# Ignore específico de api/Dockerfile (BuildKit lo toma por el nombre).
+# Deny-by-default: .env, node_modules locales y dev-server.js no entran nunca.
+*
+!package.json
+!package-lock.json
+!src/
+!src/**
+!migrations/
+!migrations/**

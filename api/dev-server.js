@@ -1,9 +1,10 @@
 /**
- * Servidor de desarrollo: replica en local lo que hará nginx en producción.
+ * Servidor de desarrollo: replica en local lo que hará el Ingress en producción.
  *
  * ¿Por qué existe? El juego pide el leaderboard a `/api` — ruta relativa, mismo
- * origen. En producción eso funciona porque nginx sirve el juego y redirige
- * `/api` al backend. En local, sin algo que haga lo mismo, el juego quedaría en
+ * origen. En producción eso funciona porque el Ingress sirve todo bajo un mismo
+ * dominio: `/` al nginx del juego y `/api` directo a la API (nginx no hace de
+ * proxy). En local, sin algo que haga lo mismo, el juego quedaría en
  * un puerto y la API en otro: orígenes distintos, CORS de por medio y una
  * constante que habría que editar según dónde corras. Todo eso desaparece con
  * un único origen.
@@ -12,7 +13,7 @@
  *                          └── /api/*   → proxy a la API (:3000)
  *
  * Es una herramienta de DESARROLLO: cero dependencias, no se empaqueta en
- * ninguna imagen y no la usa producción. Ahí el trabajo lo hace nginx.
+ * ninguna imagen y no la usa producción. Ahí el trabajo lo hace el Ingress.
  *
  * Uso:  npm run dev:serve      (con la API ya corriendo en otra terminal)
  */
@@ -39,7 +40,7 @@ const TIPOS = {
   '.svg': 'image/svg+xml'
 };
 
-/** Reenvía la petición a la API, igual que `proxy_pass` en nginx. */
+/** Reenvía la petición a la API, como hace el Ingress en producción. */
 function proxiar(peticion, respuesta) {
   const upstream = http.request(
     {

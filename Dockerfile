@@ -1,5 +1,5 @@
-# syntax=docker/dockerfile:1.7
-
+# Sin "# syntax=": se usa el frontend integrado de BuildKit (soporta COPY --chmod).
+# Esa línea bajaría el frontend de Docker Hub por tag, sin digest.
 # ============================================================================
 # Stage 1 — build: valida el artefacto y lo precomprime.
 # Misma base que runtime: un solo digest que seguir y actualizar.
@@ -70,4 +70,10 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 # (termina las respuestas en curso). SIGTERM las cortaría.
 STOPSIGNAL SIGQUIT
 
-CMD ["nginx", "-g", "daemon off;"]
+# Se reemplaza el ENTRYPOINT de la base (/docker-entrypoint.sh): sus scripts
+# reaccionan a variables NGINX_ENTRYPOINT_* / NGINX_ENVSUBST_* e intentan
+# modificar la config; con rootfs de sólo lectura eso vuelve el arranque
+# impredecible. nginx queda como PID 1 directo y recibe el SIGQUIT.
+# "daemon off" lo mantiene en primer plano: si se demoniza, el contenedor muere.
+ENTRYPOINT ["nginx"]
+CMD ["-g", "daemon off;"]

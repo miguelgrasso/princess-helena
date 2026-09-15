@@ -12,6 +12,23 @@ updates:
       - dependency-name: nginxinc/nginx-unprivileged
         update-types: ["version-update:semver-minor", "version-update:semver-major"]
 
+  # Imagen de la API (api/Dockerfile): build en node, runtime distroless.
+  - package-ecosystem: docker
+    directory: /api
+    schedule:
+      interval: weekly
+    ignore:
+      # Sólo LTS: el salto de major (24 -> 26) se hace a mano cuando la nueva
+      # sea LTS. Las majors impares nunca lo son.
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
+    # Las dos bases en un solo PR. Ojo: distroless no tiene tags con versión
+    # (el tag es "nonroot"), así que sólo puede llegar un cambio de digest.
+    # Sin confirmar que Dependabot lo proponga: vigilar el primer PR.
+    groups:
+      bases-api:
+        patterns: ["*"]
+
   # Dependencias npm del backend
   - package-ecosystem: npm
     directory: /api

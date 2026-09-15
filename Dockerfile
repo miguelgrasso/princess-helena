@@ -1,79 +1,42 @@
-# Sin "# syntax=": se usa el frontend integrado de BuildKit (soporta COPY --chmod).
-# Esa línea bajaría el frontend de Docker Hub por tag, sin digest.
-# ============================================================================
-# Stage 1 — build: valida el artefacto y lo precomprime.
-# Misma base que runtime: un solo digest que seguir y actualizar.
-# ============================================================================
-FROM nginxinc/nginx-unprivileged:1.30.4-alpine@sha256:adf5042a17f4ecdd200c595fa9ffd1be37efb18f89a830bd1a00e4ab4d59d42c AS build
+# Imagen del juego: nginx sin root sirviendo un único HTML.
+# Requiere BuildKit (usa Dockerfile.dockerignore y COPY --chmod).
 
-# La base corre como uid 101; para crear /build hace falta root.
-# Da igual: este stage no se publica.
+FROM nginxinc/nginx-unprivileged:1.30.4-alpine@sha256:adf5042a17f4ecdd200c595fa9ffd1be37efb18f89a830bd1a00e4ab4d59d42c AS build
 USER root
 WORKDIR /build
-COPY app/index.html ./index.html
-
-# Gate de build: si el juego está vacío o le falta el canvas, la imagen no se
-# construye. Barato, y evita publicar un artefacto roto por un mal copy.
-# mtime fijo en ambos archivos: el mismo index.html produce siempre la misma
-# capa. (La imagen completa NO es reproducible mientras exista el apk upgrade
-# del stage 2.) nginx no usa este mtime: ETag y Last-Modified están apagados.
-RUN set -eux; \
+COPY app/index.html ./
+# Falla si el juego llega vacío o roto. mtime fijo: mismo HTML, misma capa.
+RUN set -eu; \
     test -s index.html; \
     grep -q '<canvas' index.html; \
     gzip -9 -k index.html; \
     touch -d @0 index.html index.html.gz
 
-# ============================================================================
-# Stage 2 — runtime: nginx unprivileged (ya corre como uid 101, sin root).
-# Tag + digest: el tag es para humanos, el digest garantiza los bytes exactos.
-# Rama stable de nginx. Para actualizar, cambiar AMBOS FROM (idealmente vía
-# PR automático de Dependabot/Renovate).
-# ============================================================================
-FROM nginxinc/nginx-unprivileged:1.30.4-alpine@sha256:adf5042a17f4ecdd200c595fa9ffd1be37efb18f89a830bd1a00e4ab4d59d42c AS runtime
+FROM nginxinc/nginx-unprivileged:1.30.4-alpine@sha256:adf5042a17f4ecdd200c595fa9ffd1be37efb18f89a830bd1a00e4ab4d59d42c
 
-# Metadatos OCI: Trivy/Syft y los escáneres del registry los leen.
 LABEL org.opencontainers.image.title="princess-helena" \
-      org.opencontainers.image.description="Juego de plataformas 2D en HTML5 Canvas" \
-      org.opencontainers.image.licenses="MIT" \
-      org.opencontainers.image.source="https://github.com/miguelgrasso/princess-helena"
+      org.opencontainers.image.source="https://github.com/miguelgrasso/princess-helena" \
+      org.opencontainers.image.licenses="MIT"
 
-# Parches de Alpine (openssl, musl, busybox) entre bumps del digest.
-# NO actualiza nginx: ese paquete viene del repo de nginx.org, que no queda
-# configurado en la imagen. nginx sólo sube cambiando el FROM.
-# NO quitar aunque exista Dependabot: no está confirmado que proponga PRs
-# cuando nginx republica el MISMO tag con digest nuevo (rebuild por parches
-# de Alpine). Quitar sólo después de ver llegar un PR que cambie únicamente
-# el digest. Si se quita antes, la imagen queda sin parches y nadie se entera
-# hasta que Trivy falle en CI.
 USER root
+# Parches de Alpine entre bumps de la base. No actualiza nginx: eso llega cambiando el FROM.
 RUN apk upgrade --no-cache \
  && rm -f /etc/nginx/conf.d/default.conf /usr/share/nginx/html/*.html
 
-COPY --chown=root:root --chmod=0644 nginx/nginx.conf   /etc/nginx/nginx.conf
-COPY --chown=root:root --chmod=0644 nginx/default.conf /etc/nginx/conf.d/default.conf
-COPY --from=build --chown=root:root --chmod=0444 /build/index.html    /usr/share/nginx/html/index.html
-COPY --from=build --chown=root:root --chmod=0444 /build/index.html.gz /usr/share/nginx/html/index.html.gz
+COPY --chmod=0644 nginx/nginx.conf   /etc/nginx/nginx.conf
+COPY --chmod=0644 nginx/default.conf /etc/nginx/conf.d/default.conf
+# Contenido de root y de sólo lectura: el proceso (uid 101) no puede modificarlo.
+COPY --from=build --chmod=0444 /build/index.html /build/index.html.gz /usr/share/nginx/html/
 
-# El contenido es root:root y sólo lectura: el proceso nginx (uid 101) puede
-# leerlo pero no modificarlo. Ojo: root sí podría, por eso importa que el
-# proceso NO sea root. Número y no nombre: runAsNonRoot de k8s lo valida sin
-# abrir la imagen. Requiere readOnlyRootFilesystem + emptyDir en /tmp desde k8s.
 USER 101
+# Valida la config en el build y borra el pid y los temporales que nginx -t deja en /tmp.
+RUN nginx -t && rm -rf /tmp/*
 
 EXPOSE 8080
-
-# Sólo aplica en Docker/Compose: Kubernetes lo ignora y usa sus probes.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD ["wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
 
-# Redundante con la base, pero explícito: SIGQUIT = apagado ordenado en nginx
-# (termina las respuestas en curso). SIGTERM las cortaría.
+# SIGQUIT = apagado ordenado. ENTRYPOINT propio: el de la base modifica la config al arrancar.
 STOPSIGNAL SIGQUIT
-
-# Se reemplaza el ENTRYPOINT de la base (/docker-entrypoint.sh): sus scripts
-# reaccionan a variables NGINX_ENTRYPOINT_* / NGINX_ENVSUBST_* e intentan
-# modificar la config; con rootfs de sólo lectura eso vuelve el arranque
-# impredecible. nginx queda como PID 1 directo y recibe el SIGQUIT.
-# "daemon off" lo mantiene en primer plano: si se demoniza, el contenedor muere.
 ENTRYPOINT ["nginx"]
 CMD ["-g", "daemon off;"]

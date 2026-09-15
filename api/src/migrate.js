@@ -65,6 +65,19 @@ async function migrar() {
   log('info', 'migraciones al día', { aplicadas, total: archivos.length });
 }
 
+/**
+ * Como PID 1 del contenedor, un proceso sin handler IGNORA SIGTERM: si se
+ * cancela el Job, Kubernetes espera todo el grace period y termina con SIGKILL.
+ * Salir de inmediato es seguro: cada migración corre en su transacción y, al
+ * cortarse la conexión, Postgres hace ROLLBACK de la que estuviera en curso.
+ */
+for (const [senal, codigo] of [['SIGTERM', 143], ['SIGINT', 130]]) {
+  process.on(senal, () => {
+    log('warn', 'migraciones interrumpidas', { senal });
+    process.exit(codigo);   // 128 + número de señal, la convención de los shells
+  });
+}
+
 migrar()
   .then(() => pool.end())
   .then(() => process.exit(0))

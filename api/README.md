@@ -49,6 +49,7 @@ uno que no arranca, porque el `CrashLoopBackOff` se ve y el bug silencioso no.
 | `CORS_ORIGIN` | `*` | orígenes permitidos; con Ingress al mismo dominio no hace falta |
 | `RATE_LIMIT_MAX` | `20` | puntajes por IP por ventana |
 | `RATE_LIMIT_WINDOW` | `1 minute` | ventana del rate limit |
+| `TRUST_PROXY` | vacío (no confía) | IPs o CIDR del Ingress, separadas por coma; `true` y números de saltos se rechazan |
 
 ## Correr en local
 
@@ -149,8 +150,11 @@ Lo de abajo es responsabilidad de Myke; queda anotado lo que la app espera.
   502 en cada deploy.
 - **Sin estado en el proceso**: escala horizontalmente sin pegajosidad de sesión.
 - **Logs JSON a stdout**, listos para Loki/Elastic. No escribe archivos.
-- **`trustProxy` activo**: detrás de un Ingress la IP real llega por
-  `X-Forwarded-For`. Sin esto el rate limit vería una sola IP y limitaría a todos juntos.
+- **`TRUST_PROXY` explícito**: detrás de un Ingress la IP real llega por
+  `X-Forwarded-For`, pero esa cabecera la puede escribir cualquiera. Configurá
+  `TRUST_PROXY` con las IPs o CIDR de los pods del Ingress (en kind, por defecto
+  `10.244.0.0/16`). Un número de saltos no sirve: Fastify 5 lo ignora. Sin
+  configurar, la API ve sólo la IP del proxy y todos comparten un mismo límite.
 - El `DATABASE_URL` lleva credenciales: va en un **Secret**, no en un ConfigMap.
   La app nunca lo loguea.
 - Corre bien como usuario no-root: no escribe en disco ni necesita puertos < 1024.

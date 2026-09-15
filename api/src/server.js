@@ -28,9 +28,11 @@ const app = Fastify({
       })
     }
   },
-  // Detras de un Ingress, la IP real viene en X-Forwarded-For. Sin esto, el
-  // rate limit veria una sola IP (la del proxy) y limitaria a todo el mundo junto.
-  trustProxy: true,
+  // Detras de un Ingress, la IP real viene en X-Forwarded-For. Pero esa cabecera
+  // la escribe cualquiera: confiar en todas deja que un cliente invente su IP y
+  // esquive el rate limit. Se confia SOLO en los proxies de TRUST_PROXY (IPs o
+  // CIDR del Ingress). Sin configurar, se usa la IP del socket.
+  trustProxy: config.trustProxy,
   // Cuerpo maximo: no necesitamos mas que un JSON de dos campos.
   bodyLimit: 1024
 });
@@ -54,9 +56,26 @@ app.setErrorHandler((error, peticion, respuesta) => {
   if (error.statusCode === 429) {
     return respuesta.code(429).send({ error: 'demasiadas peticiones, probá en un minuto' });
   }
+  // Errores del cliente que Fastify detecta antes del handler: JSON mal formado
+  // (400), body mayor que bodyLimit (413), content-type no soportado (415).
+  // Responderlos como 500 ensucia la metrica de 5xx y dispara alertas falsas.
+  // Mensaje propio: el de Fastify describe detalles internos del parser.
+  if (error.statusCode >= 400 && error.statusCode < 500) {
+    peticion.log.info({ codigo: error.code, status: error.statusCode }, 'peticion rechazada');
+    const mensajes = { 413: 'body demasiado grande', 415: 'content-type no soportado' };
+    return respuesta.code(error.statusCode).send({ error: mensajes[error.statusCode] ?? 'peticion invalida' });
+  }
 
   peticion.log.error({ err: error }, 'error no controlado');
   return respuesta.code(500).send({ error: 'error interno' });
+});
+
+/**
+ * 404 generico. El de Fastify responde "Route DELETE:/api/x not found": repite
+ * metodo y URL, y le confirma a un escaner que esta hablando con Fastify.
+ */
+app.setNotFoundHandler((peticion, respuesta) => {
+  respuesta.code(404).send({ error: 'no encontrado' });
 });
 
 // Plugins y rutas. Sin `await`: se resuelven al llamar a listen(), y asi el

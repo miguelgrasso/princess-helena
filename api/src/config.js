@@ -26,10 +26,35 @@ function entero(nombre, porDefecto) {
   return valor;
 }
 
+/**
+ * trustProxy de Fastify a partir de TRUST_PROXY. Por defecto NO se confía en
+ * ningún proxy: X-Forwarded-For lo puede escribir cualquier cliente, y
+ * confiar en todos le permite inventar su IP y esquivar el rate limit.
+ *   (vacío)             -> false: la IP es la del socket (local, docker run)
+ *   "10.244.0.0/16,..." -> confía sólo en proxies con esas IPs/CIDR (el Ingress)
+ * Se rechazan a propósito:
+ *   "true"  -> es exactamente el agujero que se cerró.
+ *   números -> Fastify 5 ignora el conteo de saltos (siempre "no confiar")
+ *              porque no puede validar quién se conecta directo. Aceptarlo
+ *              dejaría el rate limit compartido entre todos sin ningún aviso.
+ */
+function proxyConfiable() {
+  const bruto = (process.env.TRUST_PROXY || '').trim();
+  if (bruto === '' || bruto === 'false') return false;
+  if (bruto === 'true') {
+    throw new Error('TRUST_PROXY=true confía en cualquier X-Forwarded-For y permite esquivar el rate limit: usá las IPs o CIDR del Ingress (ej. 10.244.0.0/16)');
+  }
+  if (/^\d+$/.test(bruto)) {
+    throw new Error(`TRUST_PROXY=${bruto}: Fastify no admite conteo de saltos y lo ignoraría; usá las IPs o CIDR del Ingress (ej. 10.244.0.0/16)`);
+  }
+  return bruto.split(',').map((d) => d.trim()).filter(Boolean);
+}
+
 export const config = {
   puerto:   entero('PORT', 3000),
   host:     process.env.HOST || '0.0.0.0',   // 0.0.0.0 para que el contenedor sea alcanzable
   logLevel: process.env.LOG_LEVEL || 'info',
+  trustProxy: proxyConfiable(),
 
   db: {
     // Única variable obligatoria: sin base de datos no hay leaderboard.

@@ -4,7 +4,8 @@ node_modules/
 # Variables de entorno con credenciales reales.
 # El que SÍ se versiona es api/.env.example, con valores de ejemplo.
 .env
-.env.local
+.env.*
+!.env.example
 
 # Logs
 *.log

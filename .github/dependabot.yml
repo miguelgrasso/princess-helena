@@ -5,6 +5,7 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # Sin cooldown a propósito: los parches de la base conviene recibirlos cuanto antes.
     ignore:
       # nginx: minor impar = mainline, par = stable. Dependabot no lo sabe y
       # propondría 1.30 -> 1.31 (mainline). Sólo aceptamos parches de la stable;
@@ -34,15 +35,31 @@ updates:
     directory: /api
     schedule:
       interval: weekly
+    # Esperar a que una versión recién publicada tenga unos días de uso antes de
+    # proponerla: los paquetes comprometidos suelen detectarse y retirarse en
+    # horas o días. Los majors esperan más. Las security updates NO se retrasan.
+    cooldown:
+      default-days: 5
+      semver-major-days: 14
     # Se agrupa para no recibir PRs sueltos que chocan en el mismo package-lock.json.
-    # fastify y sus plugins @fastify/* van juntos porque se versionan en conjunto.
-    # Las major fuera de fastify quedan fuera de "resto" a propósito: llegan en
-    # PRs individuales para revisarlas una por una.
+    # fastify y @fastify/* NO comparten numeración (los plugins declaran
+    # compatibilidad con un rango de fastify), por eso minor/patch van en un grupo
+    # y los majors en otro: un parche de seguridad nunca espera detrás de un
+    # breaking change, y los majors del ecosistema llegan juntos porque un major
+    # de fastify suele exigir majors de sus plugins.
+    # Las majors fuera de fastify quedan fuera de "resto": llegan en PRs individuales.
+    # @prometheus-io/client queda fuera de "resto" porque en 0.x un minor puede
+    # romper la API, así que llega en su propio PR.
     groups:
       fastify:
         patterns: ["fastify", "@fastify/*"]
+        update-types: ["minor", "patch"]
+      fastify-major:
+        patterns: ["fastify", "@fastify/*"]
+        update-types: ["major"]
       resto:
         patterns: ["*"]
+        exclude-patterns: ["@prometheus-io/client"]
         update-types: ["minor", "patch"]
 
   # Versiones de las actions de tus workflows
@@ -50,3 +67,7 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # Mismo porqué que en npm: una action comprometida corre con el token del
+    # workflow. Dejarla madurar unos días antes de proponerla.
+    cooldown:
+      default-days: 5

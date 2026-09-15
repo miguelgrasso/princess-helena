@@ -6,7 +6,7 @@
   "license": "MIT",
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": ">=24"
   },
   "scripts": {
     "start": "node src/server.js",
@@ -18,7 +18,7 @@
     "@fastify/cors": "^11.3.0",
     "@fastify/rate-limit": "^11.2.0",
     "@prometheus-io/client": "^0.16.1",
-    "fastify": "^5.2.0",
+    "fastify": "^5.12.4",
     "pg": "^8.13.1"
   }
 }

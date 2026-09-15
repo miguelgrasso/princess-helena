@@ -99,7 +99,14 @@ export default async function rutasScores(app) {
   });
 
   /** GET /api/leaderboard?limit=10 -> top N. */
-  app.get('/api/leaderboard', { schema: esquemaGetTop }, async (peticion) => {
+  app.get('/api/leaderboard', {
+    schema: esquemaGetTop,
+    config: {
+      // Cada lectura es una query a Postgres: sin tope por IP, martillar este
+      // endpoint agota el pool. Contador propio, separado del de escritura.
+      rateLimit: { max: config.rateLimit.lecturaMax, timeWindow: config.rateLimit.ventana }
+    }
+  }, async (peticion) => {
     const entries = await obtenerTop(peticion.query.limit ?? 10);
     return { entries };
   });

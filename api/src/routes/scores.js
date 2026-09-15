@@ -44,6 +44,21 @@ export default async function rutasScores(app) {
    */
   app.post('/api/scores', {
     schema: esquemaPostScore,
+    // Fastify configura ajv con coerceTypes: un "99" (texto) pasaría el esquema
+    // convertido en 99. El contrato pide un entero, y un tipo equivocado no es
+    // un error de formato del jugador: es un cliente que no es el juego. Por eso
+    // se mira el body CRUDO, antes de que la validación lo convierta. Si falta
+    // un campo, lo sigue reportando el esquema (required).
+    preValidation: async (peticion, respuesta) => {
+      const { player, score } = peticion.body ?? {};
+      if ((player !== undefined && typeof player !== 'string') ||
+          (score !== undefined && typeof score !== 'number')) {
+        puntajesRechazados.inc({ motivo: 'tipo_invalido' });
+        return respuesta.code(400).send({
+          error: 'player debe ser texto y score un número entero'
+        });
+      }
+    },
     config: {
       // Rate limit solo aca: es el unico endpoint que escribe.
       rateLimit: { max: config.rateLimit.max, timeWindow: config.rateLimit.ventana }
@@ -88,4 +103,15 @@ export default async function rutasScores(app) {
     const entries = await obtenerTop(peticion.query.limit ?? 10);
     return { entries };
   });
+
+  /**
+   * 405 para métodos que no existen sobre rutas que SÍ existen (RFC 9110, con
+   * Allow). Un 404 le diría al cliente que la URL está mal cuando lo que está
+   * mal es el método. HEAD no se lista: Fastify lo crea solo para cada GET.
+   */
+  const metodoNoPermitido = (permitidos) => async (peticion, respuesta) =>
+    respuesta.code(405).header('Allow', permitidos).send({ error: 'método no permitido' });
+
+  app.route({ method: ['GET', 'PUT', 'PATCH', 'DELETE'], url: '/api/scores', handler: metodoNoPermitido('POST') });
+  app.route({ method: ['POST', 'PUT', 'PATCH', 'DELETE'], url: '/api/leaderboard', handler: metodoNoPermitido('GET, HEAD') });
 }

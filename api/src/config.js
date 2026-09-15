@@ -63,14 +63,26 @@ export const config = {
   },
 
   cors: {
-    // Lista separada por comas. "*" permite cualquier origen (sólo desarrollo).
-    origen: (process.env.CORS_ORIGIN || '*') === '*'
-      ? true
-      : (process.env.CORS_ORIGIN || '').split(',').map((o) => o.trim()).filter(Boolean)
+    // Orígenes permitidos, separados por coma. VACÍO = sin CORS, y es el valor
+    // por defecto: el Ingress sirve juego y API bajo el mismo dominio, así que
+    // el juego no lo necesita. Abierto por defecto, un sitio ajeno podría hacer
+    // que los navegadores de sus visitantes envíen puntajes (y el rate limit se
+    // repartiría entre IPs de víctimas). "*" = cualquier origen: sólo para
+    // desarrollo y siempre explícito.
+    origen: (() => {
+      const bruto = (process.env.CORS_ORIGIN || '').trim();
+      if (bruto === '') return false;
+      if (bruto === '*') return true;
+      return bruto.split(',').map((o) => o.trim()).filter(Boolean);
+    })()
   },
 
   rateLimit: {
     max:      entero('RATE_LIMIT_MAX', 20),
+    // Lecturas del leaderboard. El juego lo pide al terminar cada partida, así
+    // que 60/min por IP sobra; sin tope, es la forma más barata de agotar el
+    // pool de Postgres (DB_POOL_MAX × réplicas).
+    lecturaMax: entero('RATE_LIMIT_READ_MAX', 60),
     ventana:  process.env.RATE_LIMIT_WINDOW || '1 minute'
   },
 

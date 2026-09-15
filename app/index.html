@@ -357,7 +357,7 @@ const AUDIO = {
 /* --- Leaderboard global (mejora progresiva: el juego NUNCA depende de esto) ---
    Si la API no está, falla o tarda más de API_TIMEOUT, el juego se comporta
    exactamente igual que sin red: high score en memoria y sin UI de ranking. */
-const API_BASE      = "/api";  // mismo origen que el juego (lo sirve nginx)
+const API_BASE      = "/api";  // mismo origen que el juego (el Ingress enruta /api a la API)
 const API_TIMEOUT   = 2000;    // ms: pasado esto abortamos y seguimos sin leaderboard
 const API_TOP_LIMIT = 5;       // cuántos puestos pedimos y mostramos
 const INICIALES_LARGO = 3;     // casillas de la entrada estilo arcade

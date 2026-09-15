@@ -31,7 +31,7 @@ body **no** da error: Fastify lo descarta antes de llegar al handler (ajv con
 `removeAdditional`), así que la petición se acepta sin ese campo.
 
 El endpoint es público y anónimo, así que asume tráfico hostil: validación
-estricta, tope de puntaje y rate limit por IP.
+estricta, tope de puntaje y rate limit por IP (por réplica: ver notas del pipeline).
 
 ## Variables de entorno
 
@@ -46,8 +46,9 @@ uno que no arranca, porque el `CrashLoopBackOff` se ve y el bug silencioso no.
 | `PORT` / `HOST` | `3000` / `0.0.0.0` | dónde escucha |
 | `LOG_LEVEL` | `info` | verbosidad |
 | `DB_POOL_MAX` | `10` | conexiones por réplica (ojo con `max_connections`) |
-| `CORS_ORIGIN` | `*` | orígenes permitidos; con Ingress al mismo dominio no hace falta |
+| `CORS_ORIGIN` | vacío (sin CORS) | orígenes permitidos, separados por coma; con Ingress al mismo dominio no hace falta; `*` sólo para desarrollo |
 | `RATE_LIMIT_MAX` | `20` | puntajes por IP por ventana |
+| `RATE_LIMIT_READ_MAX` | `60` | lecturas del leaderboard por IP por ventana |
 | `RATE_LIMIT_WINDOW` | `1 minute` | ventana del rate limit |
 | `TRUST_PROXY` | vacío (no confía) | IPs o CIDR del Ingress, separadas por coma; `true` y números de saltos se rechazan |
 
@@ -59,7 +60,7 @@ npm install
 # Postgres descartable
 docker run -d --rm --name helena-pg \
   -e POSTGRES_USER=helena -e POSTGRES_PASSWORD=helena -e POSTGRES_DB=helena \
-  -p 5432:5432 postgres:16-alpine
+  -p 5432:5432 postgres:17-alpine
 
 export DATABASE_URL=postgres://helena:helena@localhost:5432/helena
 npm run migrate     # crea el esquema
@@ -80,10 +81,21 @@ curl -s localhost:3000/metrics | grep helena_scores
 ## Integración con el juego (desarrollo)
 
 El juego pide el leaderboard a `/api` — ruta relativa, mismo origen. En
-producción eso funciona porque nginx sirve el juego y hace `proxy_pass` de
-`/api` al backend. En local hace falta algo equivalente, si no el juego queda en
-un puerto y la API en otro: orígenes distintos, CORS de por medio y una
-constante que habría que editar según dónde corras.
+producción eso funciona porque el **Ingress** sirve todo bajo un mismo dominio:
+
+```
+navegador → Ingress ┬── /        → nginx (el juego)
+                    └── /api/*   → la API (:3000), directo
+```
+
+nginx **no** hace de proxy hacia la API, y no debe hacerlo: su config rechaza
+todo lo que no sea GET/HEAD a nivel `server`, así que un `POST /api/scores` que
+pasara por nginx recibiría 405 y nunca llegaría a la API (el juego lo tomaría
+como "API caída" y ocultaría el leaderboard sin ningún error visible).
+
+En local hace falta algo equivalente, si no el juego queda en un puerto y la API
+en otro: orígenes distintos, CORS de por medio y una constante que habría que
+editar según dónde corras.
 
 `dev-server.js` replica esa topología con cero dependencias:
 
@@ -155,6 +167,11 @@ Lo de abajo es responsabilidad de Myke; queda anotado lo que la app espera.
   `TRUST_PROXY` con las IPs o CIDR de los pods del Ingress (en kind, por defecto
   `10.244.0.0/16`). Un número de saltos no sirve: Fastify 5 lo ignora. Sin
   configurar, la API ve sólo la IP del proxy y todos comparten un mismo límite.
+- **El rate limit es por réplica**: los contadores viven en la memoria de cada
+  proceso. Con N réplicas, una IP puede hacer hasta N veces el límite, y si el
+  HPA escala durante un abuso, cada réplica nueva le da más margen al atacante.
+  El límite que cuenta hay que aplicarlo en el **Ingress** (ingress-nginx lo
+  soporta con anotaciones); el de la app queda como segunda barrera.
 - El `DATABASE_URL` lleva credenciales: va en un **Secret**, no en un ConfigMap.
   La app nunca lo loguea.
 - Corre bien como usuario no-root: no escribe en disco ni necesita puertos < 1024.

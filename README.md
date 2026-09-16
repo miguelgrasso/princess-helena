@@ -51,7 +51,7 @@ La otra mitad es **la plataforma completa que lo despliega y lo opera**: contene
 | Capa | Tecnología |
 |---|---|
 | Juego | HTML5 Canvas + JavaScript vanilla (sin frameworks, sin dependencias) |
-| API | Node.js 20 + Fastify |
+| API | Node.js 24 + Fastify |
 | Base de datos | PostgreSQL 16 |
 | Contenedores | Docker (multistage, non-root) |
 | Orquestación | Kubernetes (kind) + Kustomize |
@@ -66,7 +66,7 @@ La otra mitad es **la plataforma completa que lo despliega y lo opera**: contene
 
 - [x] **Fase 1** — El juego: Canvas, física, animaciones, parallax, partículas, audio
 - [x] **Fase 1b** — API de leaderboard: Fastify + PostgreSQL, métricas y health checks
-- [ ] **Fase 2** — Contenerización: Dockerfiles multistage non-root + Docker Compose
+- [x] **Fase 2** — Contenerización: Dockerfiles multistage non-root + Docker Compose
 - [ ] **Fase 3** — Kubernetes: Deployments, StatefulSet, Ingress, Kustomize (dev/prod)
 - [ ] **Fase 4** — CI: GitHub Actions con escaneo de secretos y vulnerabilidades
 - [ ] **Fase 5** — GitOps: Argo CD sincronizando el cluster desde este repo
@@ -77,13 +77,35 @@ La otra mitad es **la plataforma completa que lo despliega y lo opera**: contene
 
 ## Cómo correrlo
 
-> Disponible a partir de la Fase 2.
+Sólo hace falta Docker con BuildKit (el de Docker Desktop o cualquier Docker Engine reciente).
 
 ```bash
 git clone https://github.com/miguelgrasso/princess-helena.git
 cd princess-helena
+
+cp .env.example .env                            # editar POSTGRES_PASSWORD
 docker compose up -d --build
-# el juego queda en http://localhost:8080
+docker compose run --rm api src/migrate.js      # crea las tablas (una sola vez)
+```
+
+| URL | Qué es |
+|---|---|
+| http://localhost:8080 | el juego, servido por nginx igual que en el cluster |
+| http://localhost:3000 | la API: `/api/leaderboard`, `/healthz`, `/readyz`, `/metrics` |
+
+En `:8080` el juego anda completo pero **sin leaderboard**: nginx sirve el HTML y no
+hace de proxy a `/api`, porque en el cluster ese enrutado lo hace el Ingress. Para
+verlo integrado en local hay un perfil que levanta el equivalente:
+
+```bash
+docker compose --profile dev up -d              # http://localhost:8081 — juego + API, mismo origen
+```
+
+Para apagar:
+
+```bash
+docker compose down                             # los datos sobreviven en el volumen pgdata
+docker compose down -v                          # borra también los datos
 ```
 
 ---

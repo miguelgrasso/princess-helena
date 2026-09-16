@@ -1,0 +1,109 @@
+# Entorno local completo: base, API y juego. Sólo para desarrollo y pruebas.
+#
+#   cp .env.example .env            # editar POSTGRES_PASSWORD
+#   docker compose up -d --build
+#   docker compose run --rm api src/migrate.js    # migraciones (ENTRYPOINT es node)
+#   docker compose down             # los datos sobreviven en el volumen pgdata
+#   docker compose down -v          # borra también los datos
+#
+# OJO: el juego en :8080 NO va a mostrar el leaderboard. nginx sirve el HTML y
+# no hace de proxy a /api (a propósito: rechaza todo lo que no sea GET/HEAD), y
+# en producción ese enrutado lo hace el Ingress. El juego lo trata como "API
+# caída" y sigue andando igual. Para verlo integrado en local, el perfil dev de
+# más abajo levanta el equivalente del Ingress en :8081.
+
+services:
+  postgres:
+    # Pineada por digest como las demás imágenes del repo. Postgres 16.15.
+    image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
+    environment:
+      POSTGRES_USER:     ${POSTGRES_USER:-helena}
+      POSTGRES_DB:       ${POSTGRES_DB:-helena}
+      # Sin valor por defecto a propósito: una contraseña quemada en el compose
+      # termina copiada a producción. Si falta, compose falla con este mensaje.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?falta POSTGRES_PASSWORD en .env (copiar .env.example)}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # Es lo que hace útil al depends_on: "arrancó" no es lo mismo que "acepta
+    # conexiones". Sin esto la API arranca antes y falla la primera consulta.
+    # Se usa psql y no pg_isready: pg_isready da OK con sólo recibir respuesta del
+    # servidor, aunque el usuario o la base no existan (pasa si cambiás
+    # POSTGRES_USER/DB con el volumen ya creado). Una query real no miente.
+    healthcheck:
+      test: ["CMD-SHELL", "psql -U ${POSTGRES_USER:-helena} -d ${POSTGRES_DB:-helena} -c 'select 1' > /dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    # Sin ports: sólo la API necesita la base, y se alcanzan por la red interna.
+    # Para inspeccionarla con psql desde el host, descomentar:
+    # ports: ["5432:5432"]
+
+  api:
+    build: ./api
+    environment:
+      # "postgres" es el nombre del servicio: lo resuelve el DNS interno de
+      # compose. localhost apuntaría al propio contenedor de la API.
+      # Si la contraseña lleva @ : / # ? la URL se rompe y la API no conecta
+      # (los contenedores igual quedan "healthy": /healthz no toca la base).
+      # Para esos casos, definí DATABASE_URL entera en .env ya codificada.
+      DATABASE_URL: ${DATABASE_URL:-postgres://${POSTGRES_USER:-helena}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-helena}}
+      # Vacíos = los defaults seguros: sin CORS y sin confiar en X-Forwarded-For.
+      CORS_ORIGIN:  ${CORS_ORIGIN:-}
+      TRUST_PROXY:  ${TRUST_PROXY:-}
+      LOG_LEVEL:    ${LOG_LEVEL:-info}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Publicado para probar con curl. Si no lo necesitás, borrá esta línea: la
+    # API igual es alcanzable desde los otros servicios por la red interna.
+    ports:
+      - "3000:3000"
+    # Mismas restricciones que en producción, así un problema se ve acá y no
+    # recién en el cluster. La imagen no escribe en disco; /tmp por las dudas.
+    read_only: true
+    tmpfs: ["/tmp"]
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+
+  juego:
+    # El contexto es la raíz: el Dockerfile copia app/index.html y nginx/*.conf.
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # La imagen unprivileged escucha en 8080 (no puede bindear puertos < 1024).
+    ports:
+      - "8080:8080"
+    read_only: true
+    tmpfs: ["/tmp"]
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+
+  # Perfil "dev": une el juego y la API bajo un mismo origen, que es lo que hará
+  # el Ingress en el cluster (por eso allá este servicio no existe). Sin él, el
+  # juego en :8080 pide /api a nginx y recibe 404, y esconde el leaderboard.
+  #   docker compose --profile dev up -d     ->  http://localhost:8081
+  dev:
+    profiles: ["dev"]
+    image: node:24.21.0-trixie-slim@sha256:db3ae80f5d8df06e04dabdf7b44cbf008d32de168205fa0294444aabbc08c590
+    # dev-server.js no tiene dependencias: se monta el código y se corre, sin build.
+    command: ["node", "/repo/api/dev-server.js"]
+    environment:
+      DEV_PORT: "8081"
+      API_HOST: api          # nombre del servicio, no localhost
+      API_PORT: "3000"
+    volumes:
+      - ./app:/repo/app:ro
+      - ./api/dev-server.js:/repo/api/dev-server.js:ro
+    ports:
+      - "8081:8081"
+    depends_on:
+      api:
+        condition: service_healthy
+    user: "1000:1000"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+
+volumes:
+  pgdata:

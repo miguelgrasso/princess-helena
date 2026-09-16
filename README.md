@@ -59,6 +59,7 @@ La otra mitad es **la plataforma completa que lo despliega y lo opera**: contene
 | GitOps | Argo CD |
 | Observabilidad | Prometheus + Grafana |
 | IaC | Terraform |
+| Portal de desarrollo | Backstage (catálogo + software templates) |
 
 ---
 
@@ -67,11 +68,14 @@ La otra mitad es **la plataforma completa que lo despliega y lo opera**: contene
 - [x] **Fase 1** — El juego: Canvas, física, animaciones, parallax, partículas, audio
 - [x] **Fase 1b** — API de leaderboard: Fastify + PostgreSQL, métricas y health checks
 - [x] **Fase 2** — Contenerización: Dockerfiles multistage non-root + Docker Compose
-- [ ] **Fase 3** — Kubernetes: Deployments, StatefulSet, Ingress, Kustomize (dev/prod)
+- [ ] **Fase 3a** — IaC: el cluster kind nace de `terraform apply`
+- [ ] **Fase 3b** — Kubernetes: Deployments, StatefulSet, Job de migración, Ingress, Kustomize (dev/prod)
 - [ ] **Fase 4** — CI: GitHub Actions con escaneo de secretos y vulnerabilidades
 - [ ] **Fase 5** — GitOps: Argo CD sincronizando el cluster desde este repo
 - [ ] **Fase 6** — Observabilidad: Prometheus + Grafana (dashboards técnico y de negocio)
-- [ ] **Fase 7** — IaC: el cluster nace de `terraform apply`
+- [ ] **Fase 7** — Plataforma como código: ingress-controller, Argo CD y observabilidad provisionados con Terraform
+- [ ] **Fase 8** — IDP: Backstage con catálogo de servicios y una *golden path* que genera un microservicio completo (repo, pipeline, manifiestos y despliegue) a partir de este proyecto
+- [ ] **Fase 9** — Migración a AWS: el mismo stack sobre EKS (Terraform con módulo EKS, ALB Controller con IRSA, EBS CSI, ECR). Sesiones efímeras con `terraform destroy` al cerrar.
 
 ---
 

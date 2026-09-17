@@ -1,0 +1,11 @@
+---
+# Versiones de las herramientas del entorno.
+# Fijas a propósito: la reproducibilidad vale más que estar siempre
+# en la última. Para actualizar, se cambia acá y se prueba.
+docker_min: "24.0"
+
+kind_version: "0.33.0"
+kubectl_version: "1.33.0"
+helm_version: "3.16.0"
+terraform_version: "1.9.8"
+trivy_version: "0.74.0"

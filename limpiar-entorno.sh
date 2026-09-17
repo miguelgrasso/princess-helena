@@ -28,14 +28,22 @@ done
 # ── Inventario: qué hay realmente instalado ───────────────────
 echo "Herramientas encontradas:"
 ENCONTRADAS=()
+VISTAS=()
 for h in "${HERRAMIENTAS[@]}"; do
-    # -a lista TODAS las copias en el PATH, no solo la primera:
-    # es común tener una de apt y otra manual peleándose.
+    # type -aP lista TODAS las copias en el PATH, no sólo la primera: es común
+    # tener una de apt y otra manual peleándose. (command -v -a es de zsh; en
+    # bash falla con "invalid option" y el inventario queda vacío en silencio.)
     while IFS= read -r ruta; do
         [ -n "$ruta" ] || continue
+        # /bin, /sbin y /usr/sbin son enlaces a /usr/bin: cuatro rutas para un
+        # mismo archivo. Se compara la ruta resuelta para no contarlo (ni
+        # "borrarlo") varias veces, sin perder las copias que sí son distintas.
+        real=$(readlink -f "$ruta")
+        case " ${VISTAS[*]:-} " in *" $real "*) continue ;; esac
+        VISTAS+=("$real")
         echo "   $h → $ruta"
         ENCONTRADAS+=("$ruta")
-    done < <(command -v -a "$h" 2>/dev/null || true)
+    done < <(type -aP "$h" 2>/dev/null || true)
 done
 
 if [ ${#ENCONTRADAS[@]} -eq 0 ]; then
@@ -111,8 +119,10 @@ if command -v apt >/dev/null 2>&1; then
     done
 fi
 
-# El shell cachea dónde encontró cada comando: sin esto, los binarios
-# recién borrados "siguen existiendo" en esta sesión.
+# Limpia el cache de rutas DE ESTE script. No alcanza para la terminal que lo
+# ejecutó: ese shell es otro proceso y sigue con las rutas viejas cacheadas, así
+# que `kubectl` va a "seguir existiendo" hasta que corras `hash -r` vos (o abras
+# una terminal nueva). Por eso también aparece en los pasos finales.
 hash -r
 
 echo
@@ -120,4 +130,5 @@ echo "Entorno limpio ✅"
 echo "Respaldo en: $RESPALDO"
 echo "Para restaurar algo:  sudo mv $RESPALDO/<nombre> /usr/local/bin/"
 echo
+echo "En ESTA terminal, limpiá el cache de rutas:  hash -r"
 echo "Ahora probá:  bash ./bootstrap.sh"

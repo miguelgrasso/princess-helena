@@ -1,0 +1,187 @@
+---
+# ══════════════════════════════════════════════════════════════
+# bootstrap.yml — prepara una máquina para trabajar en el proyecto
+#
+# Equivalente declarativo de scripts/bootstrap.sh.
+# Docker NO se instala: es prerequisito del entorno (tres escenarios
+# distintos en Linux/WSL, requiere reiniciar sesión). Solo se verifica.
+#
+# Uso:
+#   ansible-playbook -i inventory.ini bootstrap.yml --check   # dry-run
+#   ansible-playbook -i inventory.ini bootstrap.yml
+#   ansible-playbook -i inventory.ini bootstrap.yml --tags kind
+# ══════════════════════════════════════════════════════════════
+
+- name: Preparar entorno de desarrollo
+  hosts: local
+  gather_facts: yes          # necesario para ansible_architecture
+  become: no                 # se eleva solo donde hace falta
+
+  vars:
+    bin_dir: /usr/local/bin
+
+    # ansible_architecture devuelve x86_64 / aarch64; los releases usan
+    # amd64 / arm64. Este mapa hace la traducción una sola vez.
+    arch_map:
+      x86_64: amd64
+      aarch64: arm64
+      arm64: arm64
+    arch: "{{ arch_map[ansible_architecture] | default('no-soportada') }}"
+
+    # trivy nombra sus releases distinto al resto
+    arch_trivy_map:
+      amd64: 64bit
+      arm64: ARM64
+    arch_trivy: "{{ arch_trivy_map[arch] | default('no-soportada') }}"
+
+  pre_tasks:
+    - name: Verificar que la arquitectura está soportada
+      ansible.builtin.assert:
+        that: arch != 'no-soportada'
+        fail_msg: "Arquitectura no soportada: {{ ansible_architecture }}"
+      tags: always
+
+  tasks:
+
+    # ══════════════════════════════════════════════════════════
+    # DOCKER — solo se verifica
+    # ══════════════════════════════════════════════════════════
+
+    - name: Comprobar si el daemon de Docker responde
+      ansible.builtin.command: docker info
+      register: docker_check
+      changed_when: false      # verificar no es cambiar: mantiene la idempotencia
+      failed_when: false       # el error lo manejamos abajo, con mensaje propio
+      tags: [docker, always]
+
+    - name: Exigir Docker operativo
+      ansible.builtin.assert:
+        that: docker_check.rc == 0
+        fail_msg: >-
+          Docker no está disponible.
+          Si está instalado, revisá que el daemon esté corriendo
+          (¿Docker Desktop abierto?).
+          Si no: https://docs.docker.com/get-docker/
+        success_msg: "Docker operativo"
+      tags: [docker, always]
+
+    - name: Leer la versión del daemon de Docker
+      ansible.builtin.command: docker version --format '{{ '{{' }}.Server.Version{{ '}}' }}'
+      register: docker_version
+      changed_when: false
+      tags: docker
+
+    - name: Advertir si Docker está por debajo del mínimo
+      ansible.builtin.debug:
+        msg: "Docker {{ docker_version.stdout }} está por debajo del mínimo recomendado ({{ docker_min }})"
+      when: docker_version.stdout is version(docker_min, '<')
+      tags: docker
+
+    # ══════════════════════════════════════════════════════════
+    # BINARIOS SUELTOS — kind y kubectl
+    # get_url es idempotente: si el archivo ya está y coincide,
+    # no vuelve a descargar.
+    # ══════════════════════════════════════════════════════════
+
+    - name: Instalar kind
+      ansible.builtin.get_url:
+        url: "https://kind.sigs.k8s.io/dl/v{{ kind_version }}/kind-linux-{{ arch }}"
+        dest: "{{ bin_dir }}/kind"
+        mode: '0755'
+        owner: root
+        group: root
+      become: yes
+      tags: kind
+
+    - name: Instalar kubectl
+      ansible.builtin.get_url:
+        url: "https://dl.k8s.io/release/v{{ kubectl_version }}/bin/linux/{{ arch }}/kubectl"
+        dest: "{{ bin_dir }}/kubectl"
+        mode: '0755'
+        owner: root
+        group: root
+      become: yes
+      tags: kubectl
+
+    # ══════════════════════════════════════════════════════════
+    # PAQUETES COMPRIMIDOS — helm, terraform y trivy
+    # unarchive descarga y descomprime en una sola tarea.
+    # 'creates' evita rehacer el trabajo si el binario ya existe:
+    # así la tarea es idempotente sin lógica extra.
+    # ══════════════════════════════════════════════════════════
+
+    - name: Instalar helm
+      ansible.builtin.unarchive:
+        src: "https://get.helm.sh/helm-v{{ helm_version }}-linux-{{ arch }}.tar.gz"
+        dest: "{{ bin_dir }}"
+        remote_src: yes
+        # el tarball trae linux-<arch>/helm: extraemos solo el binario
+        extra_opts:
+          - --strip-components=1
+          - "linux-{{ arch }}/helm"
+        mode: '0755'
+        owner: root
+        group: root
+        creates: "{{ bin_dir }}/helm"
+      become: yes
+      tags: helm
+
+    - name: Instalar terraform
+      ansible.builtin.unarchive:
+        src: "https://releases.hashicorp.com/terraform/{{ terraform_version }}/terraform_{{ terraform_version }}_linux_{{ arch }}.zip"
+        dest: "{{ bin_dir }}"
+        remote_src: yes
+        mode: '0755'
+        owner: root
+        group: root
+        creates: "{{ bin_dir }}/terraform"
+      become: yes
+      tags: terraform
+
+    - name: Instalar trivy
+      ansible.builtin.unarchive:
+        src: "https://github.com/aquasecurity/trivy/releases/download/v{{ trivy_version }}/trivy_{{ trivy_version }}_Linux-{{ arch_trivy }}.tar.gz"
+        dest: "{{ bin_dir }}"
+        remote_src: yes
+        extra_opts: ["trivy"]      # el tarball trae también LICENSE y README
+        mode: '0755'
+        owner: root
+        group: root
+        creates: "{{ bin_dir }}/trivy"
+      become: yes
+      tags: trivy
+
+  # ══════════════════════════════════════════════════════════════
+  # VERIFICACIÓN FINAL
+  # Un archivo copiado no garantiza un binario funcional.
+  # ══════════════════════════════════════════════════════════════
+  post_tasks:
+    - name: Comprobar que cada herramienta responde
+      ansible.builtin.command: "{{ item }} version"
+      register: verificacion
+      changed_when: false
+      failed_when: verificacion.rc != 0
+      loop: [kind, helm, terraform]
+      tags: verify
+
+    - name: Comprobar kubectl (--client evita contactar al cluster)
+      ansible.builtin.command: kubectl version --client
+      changed_when: false
+      tags: verify
+
+    - name: Comprobar trivy
+      ansible.builtin.command: trivy --version
+      changed_when: false
+      tags: verify
+
+    - name: Resumen
+      ansible.builtin.debug:
+        msg:
+          - "Docker     {{ docker_version.stdout | default('?') }}"
+          - "kind       {{ kind_version }}"
+          - "kubectl    {{ kubectl_version }}"
+          - "helm       {{ helm_version }}"
+          - "terraform  {{ terraform_version }}"
+          - "trivy      {{ trivy_version }}"
+          - "Entorno listo"
+      tags: always

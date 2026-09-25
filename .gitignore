@@ -10,3 +10,26 @@ node_modules/
 # Logs
 *.log
 npm-debug.log*
+
+# ── Terraform ─────────────────────────────────────
+# El state puede contener valores en claro, incluidos secretos que los
+# providers manejaron. Nunca va al repo.
+*.tfstate
+*.tfstate.*
+.terraform/
+crash.log
+crash.*.log
+
+# Variables locales: rutas, credenciales o ajustes de cada máquina
+*.tfvars
+*.tfvars.json
+!example.tfvars
+
+# Planes guardados (pueden incluir valores sensibles)
+*.tfplan
+
+# Kubeconfig que escribe Terraform al crear el cluster: trae el certificado y
+# la clave de admin del cluster.
+kubeconfig
+override.tf
+override_*.tf

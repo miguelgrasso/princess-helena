@@ -1,6 +1,6 @@
 # Imagen de la API. Build: docker build -f api/Dockerfile api/   (requiere BuildKit)
 
-FROM node:24.21.0-trixie-slim@sha256:db3ae80f5d8df06e04dabdf7b44cbf008d32de168205fa0294444aabbc08c590 AS build
+FROM node:24.21.0-trixie-slim@sha256:8ec5d7557396cfe32d21c3f9c13072355ceab22b584578ca4bb28af31120cffe AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 # --ignore-scripts: ninguna dependencia necesita install scripts, y uno comprometido no corre en el build.
@@ -16,7 +16,7 @@ RUN set -eu; \
 
 # Distroless: sin shell ni gestor de paquetes. Los parches del SO y de Node llegan sólo
 # cambiando el digest, y Trivy no ve la versión del binario de node: vigilarla en CI.
-FROM gcr.io/distroless/nodejs24-debian13:nonroot@sha256:bb6b03d81066993293a10feda7250e8e1cc034035fe9b61cfceededa7c8bf04d
+FROM gcr.io/distroless/nodejs24-debian13:nonroot@sha256:9eeb7f5887d0e239e78264b06f7f11d2e14be534050481803a9e4728fcdd278e
 
 LABEL org.opencontainers.image.title="helena-api" \
       org.opencontainers.image.source="https://github.com/miguelgrasso/princess-helena" \

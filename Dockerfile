@@ -1,7 +1,7 @@
 # Imagen del juego: nginx sin root sirviendo un único HTML.
 # Requiere BuildKit (usa Dockerfile.dockerignore y COPY --chmod).
 
-FROM nginxinc/nginx-unprivileged:1.30.5-alpine@sha256:daa17b944bac2b578e962da4c61ad72a59233b3c63abea17113acaf4e6b9aea4 AS build
+FROM nginxinc/nginx-unprivileged:1.30.6-alpine@sha256:782bb89768cc87b7f95c18b95baa1af250e5d451f26794f59363540161147c01 AS build
 USER root
 WORKDIR /build
 COPY app/index.html ./
@@ -12,7 +12,7 @@ RUN set -eu; \
     gzip -9 -k index.html; \
     touch -d @0 index.html index.html.gz
 
-FROM nginxinc/nginx-unprivileged:1.30.5-alpine@sha256:daa17b944bac2b578e962da4c61ad72a59233b3c63abea17113acaf4e6b9aea4
+FROM nginxinc/nginx-unprivileged:1.30.6-alpine@sha256:782bb89768cc87b7f95c18b95baa1af250e5d451f26794f59363540161147c01
 
 LABEL org.opencontainers.image.title="princess-helena" \
       org.opencontainers.image.source="https://github.com/miguelgrasso/princess-helena" \
